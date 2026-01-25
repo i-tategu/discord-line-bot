@@ -223,22 +223,17 @@ def find_cutout_url(board_name, board_number, board_size, background='product'):
     return f"{CUTOUT_BASE_URL}/{filename}"
 
 
-def download_image(url, temp_dir, max_size=800):
-    """URLから画像をダウンロードして圧縮保存"""
+def download_image(url, temp_dir, max_size=800, preserve_transparency=False):
+    """URLから画像をダウンロードして圧縮保存
+
+    Args:
+        preserve_transparency: Trueの場合、PNG形式で透明度を保持
+    """
     try:
         response = requests.get(url, timeout=30)
         if response.status_code == 200:
             # 画像を開いてリサイズ・圧縮
             img = Image.open(BytesIO(response.content))
-
-            # RGBA→RGBに変換（JPEGで保存するため）
-            if img.mode == 'RGBA':
-                # 透明度を白背景に合成
-                white_bg = Image.new('RGB', img.size, (255, 255, 255))
-                white_bg.paste(img, mask=img.split()[3])
-                img = white_bg
-            elif img.mode != 'RGB':
-                img = img.convert('RGB')
 
             # リサイズ（最大サイズを超える場合）
             if max(img.size) > max_size:
@@ -246,11 +241,26 @@ def download_image(url, temp_dir, max_size=800):
                 new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
                 img = img.resize(new_size, Image.LANCZOS)
 
-            # JPEGで保存（圧縮率80%）
-            filename = os.path.splitext(os.path.basename(url))[0] + '.jpg'
-            filepath = os.path.join(temp_dir, filename)
-            img.save(filepath, 'JPEG', quality=80, optimize=True)
-            print(f"[IMG] Compressed: {os.path.getsize(filepath) / 1024:.1f}KB")
+            if preserve_transparency:
+                # PNG形式で透明度を保持
+                if img.mode != 'RGBA':
+                    img = img.convert('RGBA')
+                filename = os.path.splitext(os.path.basename(url))[0] + '.png'
+                filepath = os.path.join(temp_dir, filename)
+                img.save(filepath, 'PNG', optimize=True)
+            else:
+                # JPEG形式（透明度を白背景に変換）
+                if img.mode == 'RGBA':
+                    white_bg = Image.new('RGB', img.size, (255, 255, 255))
+                    white_bg.paste(img, mask=img.split()[3])
+                    img = white_bg
+                elif img.mode != 'RGB':
+                    img = img.convert('RGB')
+                filename = os.path.splitext(os.path.basename(url))[0] + '.jpg'
+                filepath = os.path.join(temp_dir, filename)
+                img.save(filepath, 'JPEG', quality=80, optimize=True)
+
+            print(f"[IMG] {'PNG' if preserve_transparency else 'JPEG'}: {os.path.getsize(filepath) / 1024:.1f}KB")
             return filepath
     except Exception as e:
         print(f"[WARN] Failed to download image: {url} - {e}")
@@ -549,8 +559,8 @@ def create_pptx(order_data, temp_dir):
     board_size_pct = sim_data.get('boardSize', 130) / 100
     text_color = (42, 24, 16)
 
-    # 背景画像をダウンロード
-    cutout_path = download_image(cutout_urls.get(background, cutout_urls['product']), temp_dir)
+    # 背景画像をダウンロード（透明度を保持）
+    cutout_path = download_image(cutout_urls.get(background, cutout_urls['product']), temp_dir, preserve_transparency=True)
 
     if cutout_path and os.path.exists(cutout_path):
         try:
@@ -674,7 +684,7 @@ def create_pptx(order_data, temp_dir):
 
     for key, label in cutout_labels:
         slide = prs.slides.add_slide(blank_layout)
-        cutout_path = download_image(cutout_urls[key], temp_dir)
+        cutout_path = download_image(cutout_urls[key], temp_dir, preserve_transparency=True)
 
         if cutout_path and os.path.exists(cutout_path):
             try:
