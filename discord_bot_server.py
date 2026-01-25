@@ -629,7 +629,7 @@ def woo_webhook():
 
     # Webhook検証（オプション）
     webhook_source = request.headers.get("X-WC-Webhook-Source", "")
-    if WOO_WEBHOOK_SECRET:
+    if get_woo_webhook_secret():
         signature = request.headers.get("X-WC-Webhook-Signature", "")
         # TODO: HMACで検証（セキュリティ強化用）
 
