@@ -242,7 +242,13 @@ def download_image(url, temp_dir):
 def refresh_canva_token(refresh_token):
     """Canvaトークンをリフレッシュ"""
     url = 'https://api.canva.com/rest/v1/oauth/token'
-    credentials = base64.b64encode(f"{get_canva_client_id()}:{get_canva_client_secret()}".encode()).decode()
+    client_id = get_canva_client_id()
+    client_secret = get_canva_client_secret()
+
+    print(f"[Canva Token] Client ID: {client_id}")
+    print(f"[Canva Token] Client Secret: {'SET' if client_secret else 'EMPTY'} (len={len(client_secret) if client_secret else 0})")
+
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
 
     response = requests.post(url, data={
         'grant_type': 'refresh_token',
@@ -252,12 +258,17 @@ def refresh_canva_token(refresh_token):
         'Content-Type': 'application/x-www-form-urlencoded',
     })
 
+    print(f"[Canva Token] Refresh status: {response.status_code}")
+
     if response.status_code == 200:
         tokens = response.json()
+        print(f"[Canva Token] Refresh successful!")
         return {
             'access_token': tokens.get('access_token'),
             'refresh_token': tokens.get('refresh_token', refresh_token)
         }
+
+    print(f"[Canva Token] Refresh failed: {response.text[:500]}")
     return None
 
 
