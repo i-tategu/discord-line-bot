@@ -1,8 +1,9 @@
 """
-Discord Bot v2 - サーバー版（Canvaボタンなし）
+Discord Bot v2 - サーバー版（Canva自動化統合）
 - Discord → LINE 転送
 - 顧客ステータス管理
 - 一覧表示・自動更新
+- WooCommerce Webhook → Canva自動化
 """
 import os
 import re
@@ -23,6 +24,14 @@ from customer_manager import (
     get_status_summary, get_all_customers_grouped, load_customers
 )
 
+# Canva自動化ハンドラー
+try:
+    from canva_handler import process_order as canva_process_order
+    CANVA_ENABLED = True
+except ImportError as e:
+    CANVA_ENABLED = False
+    print(f"[WARN] Canva handler not available: {e}")
+
 load_dotenv()
 
 # LINE設定
@@ -38,6 +47,15 @@ CATEGORY_SHIPPED = os.getenv("DISCORD_CATEGORY_SHIPPED")
 OVERVIEW_CHANNEL_ID = os.getenv("DISCORD_OVERVIEW_CHANNEL")
 FORUM_COMPLETED_ID = os.getenv("DISCORD_FORUM_COMPLETED")
 FORUM_LINE_ID = os.getenv("DISCORD_FORUM_LINE", "1463460598493745225")
+
+# Canva自動化設定
+CANVA_ACCESS_TOKEN = os.getenv("CANVA_ACCESS_TOKEN")
+CANVA_REFRESH_TOKEN = os.getenv("CANVA_REFRESH_TOKEN")
+CANVA_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")  # Canva通知用Webhook
+WC_URL = os.getenv("WC_URL")
+WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY")
+WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET")
+WOO_WEBHOOK_SECRET = os.getenv("WOO_WEBHOOK_SECRET", "")  # Webhook検証用（オプション）
 
 # スレッドマップファイル
 THREAD_MAP_FILE = os.path.join(os.path.dirname(__file__), "thread_map.json")
@@ -572,7 +590,88 @@ def api_get_overview():
 @api.route("/health", methods=["GET"])
 def health_check():
     """ヘルスチェック（Railway用）"""
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "canva_enabled": CANVA_ENABLED})
+
+
+@api.route("/api/woo-webhook", methods=["POST"])
+def woo_webhook():
+    """WooCommerce Webhook受信 → Canva自動化"""
+    if not CANVA_ENABLED:
+        return jsonify({"error": "Canva handler not available"}), 503
+
+    # Webhook検証（オプション）
+    webhook_source = request.headers.get("X-WC-Webhook-Source", "")
+    if WOO_WEBHOOK_SECRET:
+        signature = request.headers.get("X-WC-Webhook-Signature", "")
+        # TODO: HMACで検証（セキュリティ強化用）
+
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data"}), 400
+
+    order_id = data.get("id")
+    if not order_id:
+        return jsonify({"error": "No order_id"}), 400
+
+    print(f"[Webhook] Received order #{order_id} from {webhook_source}")
+
+    # 必要な設定が揃っているか確認
+    if not all([CANVA_ACCESS_TOKEN, CANVA_REFRESH_TOKEN, WC_URL, WC_CONSUMER_KEY, WC_CONSUMER_SECRET]):
+        print("[ERROR] Missing Canva or WooCommerce configuration")
+        return jsonify({"error": "Missing configuration"}), 500
+
+    # 非同期でCanva処理を実行（Webhookレスポンスを待たせない）
+    def process_async():
+        try:
+            config = {
+                'wc_url': WC_URL,
+                'wc_key': WC_CONSUMER_KEY,
+                'wc_secret': WC_CONSUMER_SECRET,
+                'canva_access_token': CANVA_ACCESS_TOKEN,
+                'canva_refresh_token': CANVA_REFRESH_TOKEN,
+                'discord_webhook': CANVA_WEBHOOK_URL,
+            }
+            canva_process_order(order_id, config)
+        except Exception as e:
+            print(f"[ERROR] Canva processing failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    thread = threading.Thread(target=process_async, daemon=True)
+    thread.start()
+
+    return jsonify({"success": True, "message": f"Processing order #{order_id}"})
+
+
+@api.route("/api/canva/process", methods=["POST"])
+def api_canva_process():
+    """手動でCanva処理をトリガー（デバッグ用）"""
+    if not CANVA_ENABLED:
+        return jsonify({"error": "Canva handler not available"}), 503
+
+    data = request.json
+    order_id = data.get("order_id")
+
+    if not order_id:
+        return jsonify({"error": "order_id required"}), 400
+
+    if not all([CANVA_ACCESS_TOKEN, CANVA_REFRESH_TOKEN, WC_URL, WC_CONSUMER_KEY, WC_CONSUMER_SECRET]):
+        return jsonify({"error": "Missing configuration"}), 500
+
+    # 同期で処理
+    try:
+        config = {
+            'wc_url': WC_URL,
+            'wc_key': WC_CONSUMER_KEY,
+            'wc_secret': WC_CONSUMER_SECRET,
+            'canva_access_token': CANVA_ACCESS_TOKEN,
+            'canva_refresh_token': CANVA_REFRESH_TOKEN,
+            'discord_webhook': CANVA_WEBHOOK_URL,
+        }
+        result = canva_process_order(order_id, config)
+        return jsonify({"success": result, "order_id": order_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 def run_api():
