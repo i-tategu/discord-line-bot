@@ -363,11 +363,13 @@ async def on_message(message):
                 # starter_messageがキャッシュされていない場合、履歴から取得
                 if not line_user_id:
                     async for msg in message.channel.history(limit=5, oldest_first=True):
-                        if msg.author.bot:
-                            match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', msg.content)
-                            if match:
-                                line_user_id = match.group(1)
-                                break
+                        print(f"[DEBUG] History msg: author={msg.author.name}, bot={msg.author.bot}, content_preview={msg.content[:100] if msg.content else 'None'}")
+                        # Bot以外のメッセージも含めて検索
+                        match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', msg.content)
+                        if match:
+                            line_user_id = match.group(1)
+                            print(f"[DEBUG] Found LINE User ID in history: {line_user_id}")
+                            break
 
     # 通常チャンネルからの転送（トピックにLINE User IDがあれば転送）
     if not line_user_id and hasattr(message.channel, 'topic'):
