@@ -633,7 +633,7 @@ def woo_webhook():
         signature = request.headers.get("X-WC-Webhook-Signature", "")
         # TODO: HMACで検証（セキュリティ強化用）
 
-    data = request.json
+    data = request.get_json(force=True, silent=True)
     if not data:
         return jsonify({"error": "No data"}), 400
 
