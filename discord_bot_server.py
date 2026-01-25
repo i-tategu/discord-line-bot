@@ -40,16 +40,16 @@ def get_line_token():
     return os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 
 def get_discord_token():
-    return os.environ.get("DISCORD_BOT_TOKEN")
+    return os.environ.get("get_discord_token()")
 
 def get_guild_id():
-    return os.environ.get("DISCORD_GUILD_ID")
+    return os.environ.get("get_guild_id()")
 
 def get_category_active():
-    return os.environ.get("DISCORD_CATEGORY_ACTIVE")
+    return os.environ.get("DISCORD_get_category_active()")
 
 def get_category_shipped():
-    return os.environ.get("DISCORD_CATEGORY_SHIPPED")
+    return os.environ.get("DISCORD_get_category_shipped()")
 
 def get_overview_channel():
     return os.environ.get("DISCORD_OVERVIEW_CHANNEL")
@@ -102,7 +102,7 @@ def send_line_message(user_id, messages):
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
+        "Authorization": f"Bearer {get_line_token()}"
     }
     data = {"to": user_id, "messages": messages}
     response = requests.post(url, headers=headers, json=data)
@@ -203,14 +203,14 @@ async def update_overview_channel():
     """一覧チャンネルを更新"""
     global overview_message_id
 
-    if not OVERVIEW_CHANNEL_ID:
+    if not get_overview_channel():
         return
 
-    guild = bot.get_guild(int(DISCORD_GUILD_ID))
+    guild = bot.get_guild(int(get_guild_id()))
     if not guild:
         return
 
-    channel = guild.get_channel(int(OVERVIEW_CHANNEL_ID))
+    channel = guild.get_channel(int(get_overview_channel()))
     if not channel:
         return
 
@@ -256,15 +256,15 @@ async def move_channel_to_category(channel, category_id):
 
 async def archive_channel_to_forum(channel, customer_name=None):
     """チャンネルをフォーラムにアーカイブ"""
-    if not FORUM_COMPLETED_ID:
-        print("[WARN] FORUM_COMPLETED_ID not set")
+    if not get_forum_completed():
+        print("[WARN] get_forum_completed() not set")
         return False
 
     guild = channel.guild
-    forum = guild.get_channel(int(FORUM_COMPLETED_ID))
+    forum = guild.get_channel(int(get_forum_completed()))
 
     if not forum or not isinstance(forum, discord.ForumChannel):
-        print(f"[ERROR] Forum channel not found: {FORUM_COMPLETED_ID}")
+        print(f"[ERROR] Forum channel not found: {get_forum_completed()}")
         return False
 
     try:
@@ -346,7 +346,7 @@ async def on_ready():
     print(f"[OK] Application ID: {bot.application_id}")
 
     try:
-        guild = discord.Object(id=int(DISCORD_GUILD_ID))
+        guild = discord.Object(id=int(get_guild_id()))
         bot.tree.copy_global_to(guild=guild)
         await bot.tree.sync(guild=guild)
         print("[OK] Slash commands synced")
@@ -391,8 +391,8 @@ async def on_message(message):
 
     # フォーラムスレッドからの転送
     if isinstance(message.channel, discord.Thread):
-        print(f"[DEBUG] Thread detected: parent_id={message.channel.parent_id}, FORUM_LINE_ID={FORUM_LINE_ID}")
-        if message.channel.parent_id == int(FORUM_LINE_ID):
+        print(f"[DEBUG] Thread detected: parent_id={message.channel.parent_id}, get_forum_line()={get_forum_line()}")
+        if message.channel.parent_id == int(get_forum_line()):
             line_user_id = get_line_user_id_from_thread(message.channel.id)
             if not line_user_id:
                 starter = message.channel.starter_message
@@ -503,13 +503,13 @@ async def change_status(interaction: discord.Interaction, new_status: str):
         f"{config['emoji']} ステータスを **{config['label']}** に変更しました"
     )
 
-    if status == CustomerStatus.SHIPPED and FORUM_COMPLETED_ID:
+    if status == CustomerStatus.SHIPPED and get_forum_completed():
         await channel.send("📦 完了一覧にアーカイブ中...")
         customer = get_customer(line_user_id)
         customer_name = customer.get('display_name') if customer else None
         await archive_channel_to_forum(channel, customer_name)
-    elif status != CustomerStatus.SHIPPED and CATEGORY_ACTIVE:
-        await move_channel_to_category(channel, CATEGORY_ACTIVE)
+    elif status != CustomerStatus.SHIPPED and get_category_active():
+        await move_channel_to_category(channel, get_category_active())
 
     await update_overview_channel()
 
@@ -570,15 +570,15 @@ def api_update_status():
 
     asyncio.run_coroutine_threadsafe(update_overview_channel(), bot.loop)
 
-    if status == CustomerStatus.SHIPPED and CATEGORY_SHIPPED:
+    if status == CustomerStatus.SHIPPED and get_category_shipped():
         channel_id = customer.get("discord_channel_id")
         if channel_id:
             async def move_channel():
-                guild = bot.get_guild(int(DISCORD_GUILD_ID))
+                guild = bot.get_guild(int(get_guild_id()))
                 if guild:
                     channel = guild.get_channel(int(channel_id))
                     if channel:
-                        await move_channel_to_category(channel, CATEGORY_SHIPPED)
+                        await move_channel_to_category(channel, get_category_shipped())
             asyncio.run_coroutine_threadsafe(move_channel(), bot.loop)
 
     return jsonify({"success": True, "status": new_status})
@@ -707,8 +707,8 @@ def run_api():
 # ================== Main ==================
 
 if __name__ == "__main__":
-    if not DISCORD_BOT_TOKEN:
-        print("[ERROR] DISCORD_BOT_TOKEN not set")
+    if not get_discord_token():
+        print("[ERROR] get_discord_token() not set")
         exit(1)
 
     api_thread = threading.Thread(target=run_api, daemon=True)
@@ -716,4 +716,4 @@ if __name__ == "__main__":
     print(f"[OK] API Server started")
 
     print("[...] Starting Discord Bot...")
-    bot.run(DISCORD_BOT_TOKEN)
+    bot.run(get_discord_token())
