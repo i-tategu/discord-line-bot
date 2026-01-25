@@ -48,14 +48,27 @@ OVERVIEW_CHANNEL_ID = os.getenv("DISCORD_OVERVIEW_CHANNEL")
 FORUM_COMPLETED_ID = os.getenv("DISCORD_FORUM_COMPLETED")
 FORUM_LINE_ID = os.getenv("DISCORD_FORUM_LINE", "1463460598493745225")
 
-# Canva自動化設定
-CANVA_ACCESS_TOKEN = os.getenv("CANVA_ACCESS_TOKEN")
-CANVA_REFRESH_TOKEN = os.getenv("CANVA_REFRESH_TOKEN")
-CANVA_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")  # Canva通知用Webhook
-WC_URL = os.getenv("WC_URL")
-WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY")
-WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET")
-WOO_WEBHOOK_SECRET = os.getenv("WOO_WEBHOOK_SECRET", "")  # Webhook検証用（オプション）
+# Canva自動化設定（遅延読み込み - Railway Railpack対策）
+def get_canva_access_token():
+    return os.getenv("CANVA_ACCESS_TOKEN")
+
+def get_canva_refresh_token():
+    return os.getenv("CANVA_REFRESH_TOKEN")
+
+def get_canva_webhook_url():
+    return os.getenv("DISCORD_WEBHOOK_URL")
+
+def get_wc_url():
+    return os.getenv("WC_URL")
+
+def get_wc_consumer_key():
+    return os.getenv("WC_CONSUMER_KEY")
+
+def get_wc_consumer_secret():
+    return os.getenv("WC_CONSUMER_SECRET")
+
+def get_woo_webhook_secret():
+    return os.getenv("WOO_WEBHOOK_SECRET", "")
 
 # スレッドマップファイル
 THREAD_MAP_FILE = os.path.join(os.path.dirname(__file__), "thread_map.json")
@@ -616,7 +629,7 @@ def woo_webhook():
     print(f"[Webhook] Received order #{order_id} from {webhook_source}")
 
     # 必要な設定が揃っているか確認
-    if not all([CANVA_ACCESS_TOKEN, CANVA_REFRESH_TOKEN, WC_URL, WC_CONSUMER_KEY, WC_CONSUMER_SECRET]):
+    if not all([get_canva_access_token(), get_canva_refresh_token(), get_wc_url(), get_wc_consumer_key(), get_wc_consumer_secret()]):
         print("[ERROR] Missing Canva or WooCommerce configuration")
         return jsonify({"error": "Missing configuration"}), 500
 
@@ -624,12 +637,12 @@ def woo_webhook():
     def process_async():
         try:
             config = {
-                'wc_url': WC_URL,
-                'wc_key': WC_CONSUMER_KEY,
-                'wc_secret': WC_CONSUMER_SECRET,
-                'canva_access_token': CANVA_ACCESS_TOKEN,
-                'canva_refresh_token': CANVA_REFRESH_TOKEN,
-                'discord_webhook': CANVA_WEBHOOK_URL,
+                'wc_url': get_wc_url(),
+                'wc_key': get_wc_consumer_key(),
+                'wc_secret': get_wc_consumer_secret(),
+                'canva_access_token': get_canva_access_token(),
+                'canva_refresh_token': get_canva_refresh_token(),
+                'discord_webhook': get_canva_webhook_url(),
             }
             canva_process_order(order_id, config)
         except Exception as e:
@@ -655,18 +668,18 @@ def api_canva_process():
     if not order_id:
         return jsonify({"error": "order_id required"}), 400
 
-    if not all([CANVA_ACCESS_TOKEN, CANVA_REFRESH_TOKEN, WC_URL, WC_CONSUMER_KEY, WC_CONSUMER_SECRET]):
+    if not all([get_canva_access_token(), get_canva_refresh_token(), get_wc_url(), get_wc_consumer_key(), get_wc_consumer_secret()]):
         return jsonify({"error": "Missing configuration"}), 500
 
     # 同期で処理
     try:
         config = {
-            'wc_url': WC_URL,
-            'wc_key': WC_CONSUMER_KEY,
-            'wc_secret': WC_CONSUMER_SECRET,
-            'canva_access_token': CANVA_ACCESS_TOKEN,
-            'canva_refresh_token': CANVA_REFRESH_TOKEN,
-            'discord_webhook': CANVA_WEBHOOK_URL,
+            'wc_url': get_wc_url(),
+            'wc_key': get_wc_consumer_key(),
+            'wc_secret': get_wc_consumer_secret(),
+            'canva_access_token': get_canva_access_token(),
+            'canva_refresh_token': get_canva_refresh_token(),
+            'discord_webhook': get_canva_webhook_url(),
         }
         result = canva_process_order(order_id, config)
         return jsonify({"success": result, "order_id": order_id})
