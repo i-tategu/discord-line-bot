@@ -358,8 +358,8 @@ async def on_message(message):
                     if match:
                         line_user_id = match.group(1)
 
-    # 通常チャンネルからの転送
-    if not line_user_id and message.channel.name.startswith("line-"):
+    # 通常チャンネルからの転送（トピックにLINE User IDがあれば転送）
+    if not line_user_id and hasattr(message.channel, 'topic'):
         line_user_id = get_line_user_id_from_channel(message.channel)
 
     if not line_user_id:
