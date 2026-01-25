@@ -349,6 +349,7 @@ async def on_message(message):
 
     # フォーラムスレッドからの転送
     if isinstance(message.channel, discord.Thread):
+        print(f"[DEBUG] Thread detected: parent_id={message.channel.parent_id}, FORUM_LINE_ID={FORUM_LINE_ID}")
         if message.channel.parent_id == int(FORUM_LINE_ID):
             line_user_id = get_line_user_id_from_thread(message.channel.id)
             if not line_user_id:
@@ -373,8 +374,10 @@ async def on_message(message):
         line_user_id = get_line_user_id_from_channel(message.channel)
 
     if not line_user_id:
+        print(f"[DEBUG] No LINE User ID found for channel: {message.channel.name}")
         return
 
+    print(f"[DEBUG] LINE User ID found: {line_user_id}")
     # テキストメッセージ送信
     if message.content and not message.content.startswith("!"):
         success = send_line_message(line_user_id, [
