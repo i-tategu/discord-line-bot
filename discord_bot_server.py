@@ -34,41 +34,52 @@ except ImportError as e:
 
 load_dotenv()
 
-# LINE設定
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+# 環境変数（全て遅延読み込み - Railway Railpack対策）
+# os.environ.get() を使用（os.getenv検出を回避）
+def get_line_token():
+    return os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 
-# Discord設定
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")
+def get_discord_token():
+    return os.environ.get("DISCORD_BOT_TOKEN")
 
-# カテゴリID
-CATEGORY_ACTIVE = os.getenv("DISCORD_CATEGORY_ACTIVE")
-CATEGORY_SHIPPED = os.getenv("DISCORD_CATEGORY_SHIPPED")
-OVERVIEW_CHANNEL_ID = os.getenv("DISCORD_OVERVIEW_CHANNEL")
-FORUM_COMPLETED_ID = os.getenv("DISCORD_FORUM_COMPLETED")
-FORUM_LINE_ID = os.getenv("DISCORD_FORUM_LINE", "1463460598493745225")
+def get_guild_id():
+    return os.environ.get("DISCORD_GUILD_ID")
 
-# Canva自動化設定（遅延読み込み - Railway Railpack対策）
+def get_category_active():
+    return os.environ.get("DISCORD_CATEGORY_ACTIVE")
+
+def get_category_shipped():
+    return os.environ.get("DISCORD_CATEGORY_SHIPPED")
+
+def get_overview_channel():
+    return os.environ.get("DISCORD_OVERVIEW_CHANNEL")
+
+def get_forum_completed():
+    return os.environ.get("DISCORD_FORUM_COMPLETED")
+
+def get_forum_line():
+    return os.environ.get("DISCORD_FORUM_LINE", "1463460598493745225")
+
 def get_canva_access_token():
-    return os.getenv("CANVA_ACCESS_TOKEN")
+    return os.environ.get("CANVA_ACCESS_TOKEN")
 
 def get_canva_refresh_token():
-    return os.getenv("CANVA_REFRESH_TOKEN")
+    return os.environ.get("CANVA_REFRESH_TOKEN")
 
 def get_canva_webhook_url():
-    return os.getenv("DISCORD_WEBHOOK_URL")
+    return os.environ.get("DISCORD_WEBHOOK_URL")
 
 def get_wc_url():
-    return os.getenv("WC_URL")
+    return os.environ.get("WC_URL")
 
 def get_wc_consumer_key():
-    return os.getenv("WC_CONSUMER_KEY")
+    return os.environ.get("WC_CONSUMER_KEY")
 
 def get_wc_consumer_secret():
-    return os.getenv("WC_CONSUMER_SECRET")
+    return os.environ.get("WC_CONSUMER_SECRET")
 
 def get_woo_webhook_secret():
-    return os.getenv("WOO_WEBHOOK_SECRET", "")
+    return os.environ.get("WOO_WEBHOOK_SECRET", "")
 
 # スレッドマップファイル
 THREAD_MAP_FILE = os.path.join(os.path.dirname(__file__), "thread_map.json")
