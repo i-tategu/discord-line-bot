@@ -321,11 +321,20 @@ def import_to_canva(pptx_path, title, access_token, refresh_token, retry=False):
 def get_order_from_woocommerce(order_id, wc_url, wc_key, wc_secret):
     """WooCommerceから注文を取得"""
     url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}"
-    response = requests.get(url, auth=(wc_key, wc_secret))
+    print(f"[WC API] Fetching: {url}")
 
-    if response.status_code == 200:
-        return response.json()
-    return None
+    try:
+        response = requests.get(url, auth=(wc_key, wc_secret))
+        print(f"[WC API] Status: {response.status_code}")
+
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"[WC API] Error response: {response.text[:500]}")
+            return None
+    except Exception as e:
+        print(f"[WC API] Exception: {e}")
+        return None
 
 
 def parse_order_data(order):
