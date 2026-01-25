@@ -363,12 +363,29 @@ async def on_message(message):
                 # starter_messageがキャッシュされていない場合、履歴から取得
                 if not line_user_id:
                     async for msg in message.channel.history(limit=5, oldest_first=True):
-                        print(f"[DEBUG] History msg: author={msg.author.name}, bot={msg.author.bot}, content_preview={msg.content[:100] if msg.content else 'None'}")
-                        # Bot以外のメッセージも含めて検索
-                        match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', msg.content)
-                        if match:
-                            line_user_id = match.group(1)
-                            print(f"[DEBUG] Found LINE User ID in history: {line_user_id}")
+                        # メッセージ本文から検索
+                        if msg.content:
+                            match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', msg.content)
+                            if match:
+                                line_user_id = match.group(1)
+                                print(f"[DEBUG] Found LINE User ID in content: {line_user_id}")
+                                break
+
+                        # Embed（埋め込み）から検索
+                        for embed in msg.embeds:
+                            embed_text = ""
+                            if embed.description:
+                                embed_text += embed.description
+                            for field in embed.fields:
+                                embed_text += f" {field.name} {field.value}"
+
+                            match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', embed_text)
+                            if match:
+                                line_user_id = match.group(1)
+                                print(f"[DEBUG] Found LINE User ID in embed: {line_user_id}")
+                                break
+
+                        if line_user_id:
                             break
 
     # 通常チャンネルからの転送（トピックにLINE User IDがあれば転送）
