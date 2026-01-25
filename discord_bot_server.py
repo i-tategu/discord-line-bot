@@ -803,13 +803,13 @@ def api_canva_debug_import():
 
             # Try import
             canva_title = f"Test_{order_id}"
-            design, new_tokens = import_to_canva(pptx_path, canva_title, access_token, refresh_token)
+            design, error_info = import_to_canva(pptx_path, canva_title, access_token, refresh_token)
 
             if design:
                 debug["steps"].append({"step": "import_success", "design_id": design.get('id')})
                 debug["success"] = True
             else:
-                debug["steps"].append({"step": "import_failed"})
+                debug["steps"].append({"step": "import_failed", "error": error_info})
                 debug["success"] = False
 
     except Exception as e:

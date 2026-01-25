@@ -291,7 +291,7 @@ def refresh_canva_token(refresh_token):
 
 
 def import_to_canva(pptx_path, title, access_token, refresh_token, retry=False):
-    """CanvaにPowerPointをインポート"""
+    """CanvaにPowerPointをインポート（エラー情報も返す）"""
     url = "https://api.canva.com/rest/v1/imports"
     title_base64 = base64.b64encode(title.encode("utf-8")).decode("utf-8")
 
@@ -309,30 +309,40 @@ def import_to_canva(pptx_path, title, access_token, refresh_token, retry=False):
     with open(pptx_path, "rb") as f:
         response = requests.post(url, headers=headers, data=f)
 
+    print(f"[Canva Import] Status: {response.status_code}")
+
     # 401エラー時はトークンリフレッシュ
     if response.status_code == 401 and not retry:
         print("[INFO] Token expired, refreshing...")
         new_tokens = refresh_canva_token(refresh_token)
         if new_tokens:
             return import_to_canva(pptx_path, title, new_tokens['access_token'], new_tokens['refresh_token'], retry=True)
-        return None, None
+        return None, {"error": "Token refresh failed"}
 
     if response.status_code != 200:
-        print(f"[ERROR] Canva import failed: {response.status_code} - {response.text}")
-        return None, None
+        error_msg = f"HTTP {response.status_code}: {response.text[:500]}"
+        print(f"[ERROR] Canva import failed: {error_msg}")
+        return None, {"error": error_msg}
 
     job = response.json().get("job", {})
     job_id = job.get("id")
+    print(f"[Canva Import] Job ID: {job_id}")
+
+    # リフレッシュした場合は新しいトークンを使用
+    check_token = access_token
 
     # ジョブ完了を待機
-    for _ in range(15):
+    for i in range(15):
         time.sleep(2)
         check_url = f"https://api.canva.com/rest/v1/imports/{job_id}"
-        check_resp = requests.get(check_url, headers={"Authorization": f"Bearer {access_token}"})
+        check_resp = requests.get(check_url, headers={"Authorization": f"Bearer {check_token}"})
+
+        print(f"[Canva Import] Check {i+1}: {check_resp.status_code}")
 
         if check_resp.status_code == 200:
             job_data = check_resp.json().get("job", {})
             status = job_data.get("status")
+            print(f"[Canva Import] Status: {status}")
 
             if status == "success":
                 designs = job_data.get("result", {}).get("designs", [])
@@ -340,11 +350,17 @@ def import_to_canva(pptx_path, title, access_token, refresh_token, retry=False):
                     return designs[0], None
             elif status == "failed":
                 error = job_data.get("error", {})
-                print(f"[ERROR] {error.get('message', 'Unknown error')}")
-                return None, None
+                error_msg = error.get('message', 'Unknown error')
+                print(f"[ERROR] {error_msg}")
+                return None, {"error": error_msg, "details": error}
+        elif check_resp.status_code == 401:
+            # チェック中にトークンが切れた場合、リフレッシュ
+            new_tokens = refresh_canva_token(refresh_token)
+            if new_tokens:
+                check_token = new_tokens['access_token']
 
     print("[ERROR] Timeout waiting for Canva import")
-    return None, None
+    return None, {"error": "Timeout"}
 
 
 def get_order_from_woocommerce(order_id, wc_url, wc_key, wc_secret):
