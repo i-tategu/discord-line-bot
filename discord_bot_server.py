@@ -354,9 +354,19 @@ async def on_message(message):
             if not line_user_id:
                 starter = message.channel.starter_message
                 if starter:
-                    match = re.search(r'LINE User ID:\s*`(\S+)`', starter.content)
+                    # バッククォートあり・なし両方に対応
+                    match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', starter.content)
                     if match:
                         line_user_id = match.group(1)
+
+                # starter_messageがキャッシュされていない場合、履歴から取得
+                if not line_user_id:
+                    async for msg in message.channel.history(limit=5, oldest_first=True):
+                        if msg.author.bot:
+                            match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', msg.content)
+                            if match:
+                                line_user_id = match.group(1)
+                                break
 
     # 通常チャンネルからの転送（トピックにLINE User IDがあれば転送）
     if not line_user_id and hasattr(message.channel, 'topic'):
