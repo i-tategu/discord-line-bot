@@ -234,9 +234,9 @@ def download_image(url, temp_dir, max_size=800):
             # RGBA→RGBに変換（JPEGで保存するため）
             if img.mode == 'RGBA':
                 # 透明度を白背景に合成
-                background = Image.new('RGB', img.size, (255, 255, 255))
-                background.paste(img, mask=img.split()[3])
-                img = background
+                white_bg = Image.new('RGB', img.size, (255, 255, 255))
+                white_bg.paste(img, mask=img.split()[3])
+                img = white_bg
             elif img.mode != 'RGB':
                 img = img.convert('RGB')
 
@@ -461,9 +461,9 @@ def create_pptx(order_data, temp_dir):
 
             # 圧縮: RGBA→RGB変換、リサイズ
             if img.mode == 'RGBA':
-                background = Image.new('RGB', img.size, (255, 255, 255))
-                background.paste(img, mask=img.split()[3])
-                img = background
+                white_bg = Image.new('RGB', img.size, (255, 255, 255))
+                white_bg.paste(img, mask=img.split()[3])
+                img = white_bg
             elif img.mode != 'RGB':
                 img = img.convert('RGB')
 
