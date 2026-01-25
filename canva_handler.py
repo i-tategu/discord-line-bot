@@ -654,7 +654,7 @@ def create_pptx(order_data, temp_dir):
         tree_size_pct = sim_data.get('treeSize', 80) / 100
 
         tree_url = f"{TREE_IMAGES_URL}/tree-{tree_type}.png"
-        tree_path = download_image(tree_url, temp_dir)
+        tree_path = download_image(tree_url, temp_dir, preserve_transparency=True)
 
         if tree_path and os.path.exists(tree_path):
             try:
