@@ -223,16 +223,34 @@ def find_cutout_url(board_name, board_number, board_size, background='product'):
     return f"{CUTOUT_BASE_URL}/{filename}"
 
 
-def download_image(url, temp_dir):
-    """URLから画像をダウンロードして一時ファイルに保存"""
+def download_image(url, temp_dir, max_size=800):
+    """URLから画像をダウンロードして圧縮保存"""
     try:
         response = requests.get(url, timeout=30)
         if response.status_code == 200:
-            # ファイル名を生成
-            filename = os.path.basename(url)
+            # 画像を開いてリサイズ・圧縮
+            img = Image.open(BytesIO(response.content))
+
+            # RGBA→RGBに変換（JPEGで保存するため）
+            if img.mode == 'RGBA':
+                # 透明度を白背景に合成
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[3])
+                img = background
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+
+            # リサイズ（最大サイズを超える場合）
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                img = img.resize(new_size, Image.LANCZOS)
+
+            # JPEGで保存（圧縮率80%）
+            filename = os.path.splitext(os.path.basename(url))[0] + '.jpg'
             filepath = os.path.join(temp_dir, filename)
-            with open(filepath, 'wb') as f:
-                f.write(response.content)
+            img.save(filepath, 'JPEG', quality=80, optimize=True)
+            print(f"[IMG] Compressed: {os.path.getsize(filepath) / 1024:.1f}KB")
             return filepath
     except Exception as e:
         print(f"[WARN] Failed to download image: {url} - {e}")
@@ -428,19 +446,37 @@ def create_pptx(order_data, temp_dir):
 
     if sim_image:
         try:
-            temp_img_path = os.path.join(temp_dir, f"sim_{order_data['order_id']}.png")
+            temp_img_path = os.path.join(temp_dir, f"sim_{order_data['order_id']}.jpg")
 
+            # 画像データを取得
             if sim_image.startswith('http'):
                 response = requests.get(sim_image, timeout=30)
                 response.raise_for_status()
-                with open(temp_img_path, 'wb') as f:
-                    f.write(response.content)
+                img = Image.open(BytesIO(response.content))
             else:
                 if ',' in sim_image:
                     sim_image = sim_image.split(',')[1]
                 img_data = base64.b64decode(sim_image)
-                with open(temp_img_path, 'wb') as f:
-                    f.write(img_data)
+                img = Image.open(BytesIO(img_data))
+
+            # 圧縮: RGBA→RGB変換、リサイズ
+            if img.mode == 'RGBA':
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[3])
+                img = background
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+
+            # 最大800pxにリサイズ
+            max_size = 800
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                img = img.resize(new_size, Image.LANCZOS)
+
+            # JPEGで保存
+            img.save(temp_img_path, 'JPEG', quality=80, optimize=True)
+            print(f"[IMG] Sim image: {os.path.getsize(temp_img_path) / 1024:.1f}KB")
 
             img = Image.open(temp_img_path)
             img_width, img_height = img.size
