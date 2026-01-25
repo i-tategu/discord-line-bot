@@ -22,9 +22,12 @@ from pptx.enum.text import PP_ALIGN
 # Pillow
 from PIL import Image
 
-# 設定（環境変数から取得）
-CANVA_CLIENT_ID = os.getenv("CANVA_CLIENT_ID", "OC-AZvUVtxGhbOD")
-CANVA_CLIENT_SECRET = os.getenv("CANVA_CLIENT_SECRET", "")
+# 設定（環境変数から取得 - 遅延読み込み）
+def get_canva_client_id():
+    return os.getenv("CANVA_CLIENT_ID", "OC-AZvUVtxGhbOD")
+
+def get_canva_client_secret():
+    return os.getenv("CANVA_CLIENT_SECRET", "")
 
 # サーバー上のcutout画像URL
 CUTOUT_BASE_URL = "https://i-tategu-shop.com/wp-content/themes/i-tategu/assets/images/cutouts"
@@ -239,7 +242,7 @@ def download_image(url, temp_dir):
 def refresh_canva_token(refresh_token):
     """Canvaトークンをリフレッシュ"""
     url = 'https://api.canva.com/rest/v1/oauth/token'
-    credentials = base64.b64encode(f"{CANVA_CLIENT_ID}:{CANVA_CLIENT_SECRET}".encode()).decode()
+    credentials = base64.b64encode(f"{get_canva_client_id()}:{get_canva_client_secret()}".encode()).decode()
 
     response = requests.post(url, data={
         'grant_type': 'refresh_token',
