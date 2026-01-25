@@ -624,18 +624,22 @@ def woo_webhook():
     if request.method == "GET":
         return jsonify({"status": "ok", "message": "Webhook endpoint ready"})
 
+    # Webhook検証（オプション）
+    webhook_source = request.headers.get("X-WC-Webhook-Source", "")
+    webhook_topic = request.headers.get("X-WC-Webhook-Topic", "")
+
+    # Pingテスト検出（トピックがない、またはボディが空/webhook_idのみ）
+    data = request.get_json(force=True, silent=True) or {}
+    if not data or data.get("webhook_id") and not data.get("id"):
+        print(f"[Webhook] Ping test received from {webhook_source}")
+        return jsonify({"status": "ok", "message": "Webhook ping successful"})
+
     if not CANVA_ENABLED:
         return jsonify({"error": "Canva handler not available"}), 503
 
-    # Webhook検証（オプション）
-    webhook_source = request.headers.get("X-WC-Webhook-Source", "")
     if get_woo_webhook_secret():
         signature = request.headers.get("X-WC-Webhook-Signature", "")
         # TODO: HMACで検証（セキュリティ強化用）
-
-    data = request.get_json(force=True, silent=True)
-    if not data:
-        return jsonify({"error": "No data"}), 400
 
     order_id = data.get("id")
     if not order_id:
