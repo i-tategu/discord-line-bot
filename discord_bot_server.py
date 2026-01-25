@@ -617,9 +617,13 @@ def health_check():
     return jsonify({"status": "ok", "canva_enabled": CANVA_ENABLED})
 
 
-@api.route("/api/woo-webhook", methods=["POST"])
+@api.route("/api/woo-webhook", methods=["GET", "POST"])
 def woo_webhook():
     """WooCommerce Webhook受信 → Canva自動化"""
+    # GETリクエスト = WooCommerceのPingテスト
+    if request.method == "GET":
+        return jsonify({"status": "ok", "message": "Webhook endpoint ready"})
+
     if not CANVA_ENABLED:
         return jsonify({"error": "Canva handler not available"}), 503
 
