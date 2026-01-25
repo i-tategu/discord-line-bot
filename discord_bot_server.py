@@ -758,6 +758,68 @@ def api_canva_debug_process():
     return jsonify(debug)
 
 
+@api.route("/api/canva/debug-import", methods=["POST"])
+def api_canva_debug_import():
+    """Canvaインポートを直接テスト"""
+    from canva_handler import (
+        get_order_from_woocommerce, parse_order_data, create_pptx,
+        import_to_canva, refresh_canva_token
+    )
+    import tempfile
+
+    data = request.json
+    order_id = data.get("order_id")
+    debug = {"order_id": order_id, "steps": []}
+
+    config = {
+        'wc_url': get_wc_url(),
+        'wc_key': get_wc_consumer_key(),
+        'wc_secret': get_wc_consumer_secret(),
+    }
+
+    # Get order
+    order = get_order_from_woocommerce(order_id, config['wc_url'], config['wc_key'], config['wc_secret'])
+    if not order:
+        debug["error"] = "Order not found"
+        return jsonify(debug)
+
+    order_data = parse_order_data(order)
+    debug["steps"].append({"step": "parse", "board": order_data.get('board_name')})
+
+    # Create PowerPoint
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pptx_path = create_pptx(order_data, temp_dir)
+            debug["steps"].append({"step": "pptx_created", "path": pptx_path})
+
+            # Check file size
+            import os as os_module
+            file_size = os_module.path.getsize(pptx_path)
+            debug["steps"].append({"step": "pptx_size", "bytes": file_size})
+
+            # Get fresh token
+            access_token = get_canva_access_token()
+            refresh_token = get_canva_refresh_token()
+
+            # Try import
+            canva_title = f"Test_{order_id}"
+            design, new_tokens = import_to_canva(pptx_path, canva_title, access_token, refresh_token)
+
+            if design:
+                debug["steps"].append({"step": "import_success", "design_id": design.get('id')})
+                debug["success"] = True
+            else:
+                debug["steps"].append({"step": "import_failed"})
+                debug["success"] = False
+
+    except Exception as e:
+        import traceback
+        debug["error"] = str(e)
+        debug["traceback"] = traceback.format_exc()
+
+    return jsonify(debug)
+
+
 @api.route("/api/canva/debug-token", methods=["GET"])
 def api_canva_debug_token():
     """Canvaトークンリフレッシュをテスト（デバッグ用）"""
