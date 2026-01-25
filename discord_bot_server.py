@@ -40,16 +40,16 @@ def get_line_token():
     return os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 
 def get_discord_token():
-    return os.environ.get("get_discord_token()")
+    return os.environ.get("DISCORD_BOT_TOKEN")
 
 def get_guild_id():
-    return os.environ.get("get_guild_id()")
+    return os.environ.get("DISCORD_GUILD_ID")
 
 def get_category_active():
-    return os.environ.get("DISCORD_get_category_active()")
+    return os.environ.get("DISCORD_CATEGORY_ACTIVE")
 
 def get_category_shipped():
-    return os.environ.get("DISCORD_get_category_shipped()")
+    return os.environ.get("DISCORD_CATEGORY_SHIPPED")
 
 def get_overview_channel():
     return os.environ.get("DISCORD_OVERVIEW_CHANNEL")
