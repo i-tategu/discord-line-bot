@@ -706,6 +706,58 @@ def api_canva_process():
         return jsonify({"error": str(e)}), 500
 
 
+@api.route("/api/canva/debug-process", methods=["POST"])
+def api_canva_debug_process():
+    """詳細デバッグ付きCanva処理"""
+    from canva_handler import get_order_from_woocommerce, parse_order_data
+
+    data = request.json
+    order_id = data.get("order_id")
+    debug = {"order_id": order_id, "steps": []}
+
+    # Step 1: Config check
+    config = {
+        'wc_url': get_wc_url(),
+        'wc_key': get_wc_consumer_key(),
+        'wc_secret': get_wc_consumer_secret(),
+    }
+    debug["steps"].append({"step": "config", "wc_url": config['wc_url'], "wc_key_set": bool(config['wc_key']), "wc_secret_set": bool(config['wc_secret'])})
+
+    # Step 2: Get order
+    order = get_order_from_woocommerce(order_id, config['wc_url'], config['wc_key'], config['wc_secret'])
+    if not order:
+        debug["steps"].append({"step": "get_order", "success": False, "error": "Order not found"})
+        return jsonify(debug)
+    debug["steps"].append({"step": "get_order", "success": True, "order_status": order.get('status')})
+
+    # Step 3: Check if already processed
+    meta = {m['key']: m['value'] for m in order.get('meta_data', [])}
+    if meta.get('_canva_automation_done'):
+        debug["steps"].append({"step": "check_processed", "already_done": True})
+        return jsonify(debug)
+    debug["steps"].append({"step": "check_processed", "already_done": False})
+
+    # Step 4: Parse order data
+    order_data = parse_order_data(order)
+    debug["steps"].append({
+        "step": "parse_order",
+        "product_name": order_data.get('product_name'),
+        "board_name": order_data.get('board_name'),
+        "board_number": order_data.get('board_number'),
+        "groom": order_data.get('sim_data', {}).get('groomName'),
+        "bride": order_data.get('sim_data', {}).get('brideName'),
+    })
+
+    if not order_data['board_name']:
+        debug["steps"].append({"step": "board_check", "success": False, "error": "No board name"})
+        return jsonify(debug)
+
+    debug["steps"].append({"step": "board_check", "success": True})
+    debug["ready_for_canva"] = True
+
+    return jsonify(debug)
+
+
 @api.route("/api/canva/debug-token", methods=["GET"])
 def api_canva_debug_token():
     """Canvaトークンリフレッシュをテスト（デバッグ用）"""
