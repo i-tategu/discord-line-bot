@@ -706,6 +706,58 @@ def api_canva_process():
         return jsonify({"error": str(e)}), 500
 
 
+@api.route("/api/canva/debug-token", methods=["GET"])
+def api_canva_debug_token():
+    """Canvaトークンリフレッシュをテスト（デバッグ用）"""
+    import base64
+    import requests as req
+
+    # 環境変数の状態
+    client_id = os.environ.get("CANVA_CLIENT_ID", "OC-AZvUVtxGhbOD")
+    client_secret = os.environ.get("CANVA_CLIENT_SECRET", "")
+    refresh_token = get_canva_refresh_token()
+    access_token = get_canva_access_token()
+
+    debug_info = {
+        "client_id": client_id,
+        "client_secret_set": bool(client_secret),
+        "client_secret_len": len(client_secret) if client_secret else 0,
+        "client_secret_preview": client_secret[:10] + "..." if client_secret and len(client_secret) > 10 else client_secret,
+        "refresh_token_set": bool(refresh_token),
+        "refresh_token_len": len(refresh_token) if refresh_token else 0,
+        "access_token_set": bool(access_token),
+        "access_token_len": len(access_token) if access_token else 0,
+    }
+
+    # トークンリフレッシュを試行
+    if client_id and client_secret and refresh_token:
+        url = 'https://api.canva.com/rest/v1/oauth/token'
+        credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+
+        try:
+            response = req.post(url, data={
+                'grant_type': 'refresh_token',
+                'refresh_token': refresh_token,
+            }, headers={
+                'Authorization': f'Basic {credentials}',
+                'Content-Type': 'application/x-www-form-urlencoded',
+            })
+
+            debug_info["refresh_status_code"] = response.status_code
+            debug_info["refresh_response"] = response.text[:500] if response.text else ""
+
+            if response.status_code == 200:
+                debug_info["refresh_success"] = True
+            else:
+                debug_info["refresh_success"] = False
+        except Exception as e:
+            debug_info["refresh_error"] = str(e)
+    else:
+        debug_info["refresh_skipped"] = "Missing required tokens"
+
+    return jsonify(debug_info)
+
+
 def run_api():
     """API サーバー起動"""
     port = int(os.getenv("PORT", 5701))
