@@ -1469,8 +1469,8 @@ def process_order(order_id, config):
 
         # 一時ディレクトリ作成
         with tempfile.TemporaryDirectory() as temp_dir:
-            # PDF作成（透明度対応版）
-            pdf_path = create_pdf(order_data, temp_dir)
+            # PPTX作成（Canva互換性・フォント対応が安定）
+            pptx_path = create_pptx(order_data, temp_dir)
 
             # Canvaタイトル
             groom = order_data['sim_data'].get('groomName', '')
@@ -1478,9 +1478,9 @@ def process_order(order_id, config):
             canva_title = f"注文{order_id} {order_data['board_name']} No.{order_data['board_number']} {groom}＆{bride} {order_data['wedding_date']}"
 
             # Canvaインポート
-            print(f"[Canva] Importing PDF to Canva...")
+            print(f"[Canva] Importing PPTX to Canva...")
             design, error_info = import_to_canva(
-                pdf_path, canva_title,
+                pptx_path, canva_title,
                 config['canva_access_token'],
                 config['canva_refresh_token']
             )
