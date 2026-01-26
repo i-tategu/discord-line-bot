@@ -838,6 +838,13 @@ def create_pdf(order_data, temp_dir):
     FONT_SCALE = PAGE_SIZE[0] / 500  # = 2.0
     board_size_pct = sim_data.get('boardSize', 130) / 100
 
+    # 板の境界情報（デフォルト値、画像解析後に更新）
+    board_bounds = {'minX': 0, 'maxX': 1, 'minY': 0, 'maxY': 1}
+    board_center_offset_x = 0
+    board_center_offset_y = 0
+    draw_w = 0
+    draw_h = 0
+
     # 背景cutout画像
     cutout_url = cutout_urls.get(background, cutout_urls['product'])
     try:
@@ -847,13 +854,35 @@ def create_pdf(order_data, temp_dir):
             if cutout_img.mode != 'RGBA':
                 cutout_img = cutout_img.convert('RGBA')
 
+            # 板の実際の境界を検出（透過部分を除く）
+            img_w, img_h = cutout_img.size
+            alpha = cutout_img.split()[3]
+            alpha_data = alpha.load()
+
+            # 非透明ピクセルの境界を検出
+            min_x, max_x, min_y, max_y = img_w, 0, img_h, 0
+            for py in range(img_h):
+                for px in range(img_w):
+                    if alpha_data[px, py] > 10:  # 閾値10以上を板として認識
+                        min_x = min(min_x, px)
+                        max_x = max(max_x, px)
+                        min_y = min(min_y, py)
+                        max_y = max(max_y, py)
+
+            # 正規化（0-1の範囲に）
+            if max_x > min_x and max_y > min_y:
+                board_bounds = {
+                    'minX': min_x / img_w,
+                    'maxX': max_x / img_w,
+                    'minY': min_y / img_h,
+                    'maxY': max_y / img_h
+                }
+                print(f"[PDF] Board bounds: X={board_bounds['minX']:.2f}-{board_bounds['maxX']:.2f}, Y={board_bounds['minY']:.2f}-{board_bounds['maxY']:.2f}")
+
             cutout_path = os.path.join(temp_dir, 'cutout_bg.png')
             cutout_img.save(cutout_path, 'PNG')
 
             # シミュレーターと同じロジックで描画サイズを計算
-            # 1. まず画像をページの95%に収まるようにフィット
-            # 2. その後にboardSizeを適用
-            img_w, img_h = cutout_img.size
             base_scale = 0.95
             img_ratio = img_w / img_h
             max_width = PAGE_SIZE[0] * base_scale
@@ -870,22 +899,37 @@ def create_pdf(order_data, temp_dir):
             # boardSizeを適用
             draw_w = base_width * board_size_pct
             draw_h = base_height * board_size_pct
-            x = (PAGE_SIZE[0] - draw_w) / 2
-            y = (PAGE_SIZE[1] - draw_h) / 2
+            img_x = (PAGE_SIZE[0] - draw_w) / 2
+            img_y = (PAGE_SIZE[1] - draw_h) / 2
 
-            c.drawImage(cutout_path, x, y, width=draw_w, height=draw_h, mask='auto')
-            print(f"[PDF] Cutout: base={base_width:.0f}x{base_height:.0f}, draw={draw_w:.0f}x{draw_h:.0f}, boardSize={board_size_pct*100:.0f}%")
+            # 実際の板の中心オフセットを計算（画像中心からのずれ）
+            board_center_offset_x = ((board_bounds['minX'] + board_bounds['maxX']) / 2 - 0.5) * draw_w
+            board_center_offset_y = ((board_bounds['minY'] + board_bounds['maxY']) / 2 - 0.5) * draw_h
+            print(f"[PDF] Board center offset: ({board_center_offset_x:.1f}, {board_center_offset_y:.1f})")
+
+            c.drawImage(cutout_path, img_x, img_y, width=draw_w, height=draw_h, mask='auto')
+            print(f"[PDF] Cutout: draw={draw_w:.0f}x{draw_h:.0f}, boardSize={board_size_pct*100:.0f}%")
     except Exception as e:
         print(f"[WARN] Cutout error: {e}")
 
-    # テキスト要素（PPTXと同じロジック）
+    # 実際の板のサイズ（透過部分を除く）
+    actual_board_w = draw_w * (board_bounds['maxX'] - board_bounds['minX'])
+    actual_board_h = draw_h * (board_bounds['maxY'] - board_bounds['minY'])
+
+    # 板の中心位置（ページ上での実際の位置）
+    board_center_x = PAGE_SIZE[0] / 2 + board_center_offset_x
+    board_center_y = PAGE_SIZE[1] / 2 - board_center_offset_y  # Y軸反転
+
+    # テキスト要素（板の実際の境界を基準に配置）
     c.setFillColorRGB(*text_color_hex)
 
-    # タイトル
+    # タイトル - 板の境界を基準に配置
     title_key = sim_data.get('title', 'wedding')
     title_text = sim_data.get('customTitle', '') if title_key == 'custom' else TITLES.get(title_key, 'Wedding Certificate')
-    title_x = PAGE_SIZE[0] * (sim_data.get('titleX', 50) / 100)
-    title_y = PAGE_SIZE[1] * (1 - sim_data.get('titleY', 22) / 100)
+    # titleY=22 は板の上から22%の位置
+    title_x = board_center_x + actual_board_w * ((sim_data.get('titleX', 50) - 50) / 100)
+    title_y_pct = sim_data.get('titleY', 22) / 100
+    title_y = board_center_y + actual_board_h / 2 - actual_board_h * title_y_pct
     title_size = 24 * (sim_data.get('titleSize', 100) / 100) * FONT_SCALE
     c.setFont("Helvetica", title_size)
     c.drawCentredString(title_x, title_y, title_text)
@@ -893,8 +937,9 @@ def create_pdf(order_data, temp_dir):
     # 本文
     template_key = sim_data.get('template', 'holy')
     body_text = sim_data.get('customText', '') if template_key == 'custom' else TEMPLATES.get(template_key, '')
-    body_x = PAGE_SIZE[0] * (sim_data.get('bodyX', 50) / 100)
-    body_y = PAGE_SIZE[1] * (1 - sim_data.get('bodyY', 32) / 100)
+    body_x = board_center_x + actual_board_w * ((sim_data.get('bodyX', 50) - 50) / 100)
+    body_y_pct = sim_data.get('bodyY', 32) / 100
+    body_y = board_center_y + actual_board_h / 2 - actual_board_h * body_y_pct
     body_size = 11 * (sim_data.get('bodySize', 115) / 100) * FONT_SCALE
     body_line_height = sim_data.get('bodyLineHeight', 1.4)
     c.setFont("Helvetica", body_size)
@@ -904,15 +949,17 @@ def create_pdf(order_data, temp_dir):
     # 日付
     date_format_key = sim_data.get('dateFormat', 'western')
     formatted_date = sim_data.get('customDate', '') if date_format_key == 'custom' else format_date(order_data['wedding_date'], date_format_key)
-    date_x = PAGE_SIZE[0] * (sim_data.get('dateX', 50) / 100)
-    date_y = PAGE_SIZE[1] * (1 - sim_data.get('dateY', 60) / 100)
+    date_x = board_center_x + actual_board_w * ((sim_data.get('dateX', 50) - 50) / 100)
+    date_y_pct = sim_data.get('dateY', 60) / 100
+    date_y = board_center_y + actual_board_h / 2 - actual_board_h * date_y_pct
     date_size = 18 * (sim_data.get('dateSize', 85) / 100) * FONT_SCALE
     c.setFont("Helvetica", date_size)
     c.drawCentredString(date_x, date_y, formatted_date)
 
     # 名前
-    name_x = PAGE_SIZE[0] * (sim_data.get('nameX', 50) / 100)
-    name_y = PAGE_SIZE[1] * (1 - sim_data.get('nameY', 74) / 100)
+    name_x = board_center_x + actual_board_w * ((sim_data.get('nameX', 50) - 50) / 100)
+    name_y_pct = sim_data.get('nameY', 74) / 100
+    name_y = board_center_y + actual_board_h / 2 - actual_board_h * name_y_pct
     name_size = 32 * (sim_data.get('nameSize', 90) / 100) * FONT_SCALE
     c.setFont("Helvetica", name_size)
     name_text = f"{groom}  &  {bride}"
