@@ -1200,6 +1200,88 @@ def send_discord_notification(order_data, design, webhook_url, order=None):
     return response.status_code == 204
 
 
+# 発送管理チャンネルID
+DISCORD_SHIPPING_CHANNEL_ID = "1463452139312644240"
+
+def send_shipping_notification(order_data, order, bot_token):
+    """発送管理チャンネルに住所情報を投稿"""
+    if not order or not bot_token:
+        print("[Shipping] Missing order or bot_token")
+        return False
+
+    billing = order.get('billing', {})
+    shipping = order.get('shipping', {})
+
+    # 発送先情報（shipping優先、なければbilling）
+    postcode = shipping.get('postcode') or billing.get('postcode', '')
+    state = shipping.get('state') or billing.get('state', '')
+    city = shipping.get('city') or billing.get('city', '')
+    address1 = shipping.get('address_1') or billing.get('address_1', '')
+    address2 = shipping.get('address_2') or billing.get('address_2', '')
+
+    # 都道府県コード変換（簡易版）
+    JP_STATES = {
+        'JP01': '北海道', 'JP02': '青森県', 'JP03': '岩手県', 'JP04': '宮城県',
+        'JP05': '秋田県', 'JP06': '山形県', 'JP07': '福島県', 'JP08': '茨城県',
+        'JP09': '栃木県', 'JP10': '群馬県', 'JP11': '埼玉県', 'JP12': '千葉県',
+        'JP13': '東京都', 'JP14': '神奈川県', 'JP15': '新潟県', 'JP16': '富山県',
+        'JP17': '石川県', 'JP18': '福井県', 'JP19': '山梨県', 'JP20': '長野県',
+        'JP21': '岐阜県', 'JP22': '静岡県', 'JP23': '愛知県', 'JP24': '三重県',
+        'JP25': '滋賀県', 'JP26': '京都府', 'JP27': '大阪府', 'JP28': '兵庫県',
+        'JP29': '奈良県', 'JP30': '和歌山県', 'JP31': '鳥取県', 'JP32': '島根県',
+        'JP33': '岡山県', 'JP34': '広島県', 'JP35': '山口県', 'JP36': '徳島県',
+        'JP37': '香川県', 'JP38': '愛媛県', 'JP39': '高知県', 'JP40': '福岡県',
+        'JP41': '佐賀県', 'JP42': '長崎県', 'JP43': '熊本県', 'JP44': '大分県',
+        'JP45': '宮崎県', 'JP46': '鹿児島県', 'JP47': '沖縄県'
+    }
+    state_name = JP_STATES.get(state, state)
+
+    full_address = f"{state_name}{city}{address1}"
+    if address2:
+        full_address += f" {address2}"
+
+    customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
+    customer_phone = billing.get('phone', '')
+    order_total = order.get('total', '0')
+    payment_method = order.get('payment_method_title', '')
+
+    # 商品名
+    products = []
+    for item in order.get('line_items', []):
+        products.append(item.get('name', ''))
+    product_names = ', '.join(products) if products else order_data.get('board_name', '')
+
+    embed = {
+        "title": f"🟡 未発送 | #{order_data['order_id']} {customer_name} 様",
+        "color": 0xFFD700,  # 黄色
+        "fields": [
+            {"name": "📞 電話", "value": customer_phone or "N/A", "inline": True},
+            {"name": "📦 商品", "value": product_names, "inline": True},
+            {"name": "💰 金額", "value": f"¥{int(float(order_total)):,} / {payment_method}", "inline": True},
+            {"name": "〒 住所", "value": f"{postcode} {full_address}" if postcode else full_address, "inline": False},
+        ],
+    }
+
+    # Discord Bot APIで送信
+    url = f"https://discord.com/api/v10/channels/{DISCORD_SHIPPING_CHANNEL_ID}/messages"
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = requests.post(url, json={"embeds": [embed]}, headers=headers)
+        if response.status_code in [200, 201]:
+            print(f"[Shipping] Notification sent for order #{order_data['order_id']}")
+            return True
+        else:
+            print(f"[Shipping] Failed: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        print(f"[Shipping] Error: {e}")
+        return False
+
+
 def clear_processing_lock(order_id, wc_url, wc_key, wc_secret):
     """処理中ロックを解除（失敗時用）"""
     url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}?consumer_key={wc_key}&consumer_secret={wc_secret}"
@@ -1347,6 +1429,14 @@ def process_order(order_id, config):
             print(f"[Canva] Sending Discord notification...")
             send_discord_notification(order_data, design, config['discord_webhook'], order)
             print(f"[Canva] Discord notification sent")
+
+            # 発送管理チャンネルへ住所情報通知
+            bot_token = config.get('discord_bot_token', '')
+            if bot_token:
+                print(f"[Canva] Sending shipping notification...")
+                send_shipping_notification(order_data, order, bot_token)
+            else:
+                print(f"[WARN] No bot token, skipping shipping notification")
 
             # 処理済みマーク（ここでロックも解除される）
             design_url = design.get('urls', {}).get('edit_url', '')

@@ -687,6 +687,7 @@ def woo_webhook():
                 'canva_access_token': get_canva_access_token(),
                 'canva_refresh_token': get_canva_refresh_token(),
                 'discord_webhook': get_canva_webhook_url(),
+                'discord_bot_token': get_discord_token(),
             }
             canva_process_order(order_id, config)
         except Exception as e:
@@ -724,6 +725,7 @@ def api_canva_process():
             'canva_access_token': get_canva_access_token(),
             'canva_refresh_token': get_canva_refresh_token(),
             'discord_webhook': get_canva_webhook_url(),
+            'discord_bot_token': get_discord_token(),
         }
         result = canva_process_order(order_id, config)
         return jsonify({"success": result, "order_id": order_id})
