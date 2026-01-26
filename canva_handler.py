@@ -1025,10 +1025,11 @@ def create_pdf(order_data, temp_dir):
                 tree_path = os.path.join(temp_dir, 'tree.png')
                 tree_img.save(tree_path, 'PNG')
 
-                # シミュレーターと同じ計算: img.width * (treeSize/100) * 0.08
+                # ツリーサイズ計算（シミュレーター係数0.08を調整）
                 # PDFページサイズに合わせてスケール
                 tree_w, tree_h = tree_img.size
-                sim_scale = tree_size_pct * 0.08  # シミュレーターと同じ係数
+                # 係数を0.2に増加（シミュレーターの0.08 × 2.5 = PDF用に見やすいサイズ）
+                sim_scale = tree_size_pct * 0.2
                 # シミュレーターのキャンバスは約500px、PDFは1000pxなのでx2
                 draw_w = tree_w * sim_scale * (PAGE_SIZE[0] / 500)
                 draw_h = tree_h * sim_scale * (PAGE_SIZE[1] / 500)
@@ -1129,7 +1130,7 @@ def mark_order_processed(order_id, design_url, wc_url, wc_key, wc_secret):
     url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}?consumer_key={wc_key}&consumer_secret={wc_secret}"
 
     data = {
-        "status": "design-in-progress",  # デザイン打ち合わせ中
+        "status": "designing",  # デザイン打ち合わせ中 (short slug for WP 20-char limit)
         "meta_data": [
             {"key": "canva_automation_done", "value": "1"},
             {"key": "canva_design_url", "value": design_url},
@@ -1142,7 +1143,7 @@ def mark_order_processed(order_id, design_url, wc_url, wc_key, wc_secret):
         if response.status_code != 200:
             print(f"[WC Update] Error: {response.text[:500]}")
             return False
-        print(f"[WC Update] Order #{order_id} marked as processed, status → design-in-progress")
+        print(f"[WC Update] Order #{order_id} marked as processed, status → designing")
         return True
     except Exception as e:
         print(f"[WC Update] Exception: {e}")
