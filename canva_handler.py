@@ -847,25 +847,34 @@ def create_pdf(order_data, temp_dir):
             if cutout_img.mode != 'RGBA':
                 cutout_img = cutout_img.convert('RGBA')
 
-            # リサイズ
-            max_size = 800
-            if max(cutout_img.size) > max_size:
-                ratio = max_size / max(cutout_img.size)
-                new_size = (int(cutout_img.size[0] * ratio), int(cutout_img.size[1] * ratio))
-                cutout_img = cutout_img.resize(new_size, Image.LANCZOS)
-
             cutout_path = os.path.join(temp_dir, 'cutout_bg.png')
             cutout_img.save(cutout_path, 'PNG')
 
-            # 描画
+            # シミュレーターと同じロジックで描画サイズを計算
+            # 1. まず画像をページの95%に収まるようにフィット
+            # 2. その後にboardSizeを適用
             img_w, img_h = cutout_img.size
-            draw_w = img_w * board_size_pct
-            draw_h = img_h * board_size_pct
+            base_scale = 0.95
+            img_ratio = img_w / img_h
+            max_width = PAGE_SIZE[0] * base_scale
+            max_height = PAGE_SIZE[1] * base_scale
+
+            # アスペクト比を維持してフィット
+            if img_w / max_width > img_h / max_height:
+                base_width = max_width
+                base_height = max_width / img_ratio
+            else:
+                base_height = max_height
+                base_width = max_height * img_ratio
+
+            # boardSizeを適用
+            draw_w = base_width * board_size_pct
+            draw_h = base_height * board_size_pct
             x = (PAGE_SIZE[0] - draw_w) / 2
             y = (PAGE_SIZE[1] - draw_h) / 2
 
             c.drawImage(cutout_path, x, y, width=draw_w, height=draw_h, mask='auto')
-            print(f"[PDF] Cutout added with mask='auto' for transparency")
+            print(f"[PDF] Cutout: base={base_width:.0f}x{base_height:.0f}, draw={draw_w:.0f}x{draw_h:.0f}, boardSize={board_size_pct*100:.0f}%")
     except Exception as e:
         print(f"[WARN] Cutout error: {e}")
 
