@@ -54,6 +54,16 @@ FONT_MAP = {
     'Dancing Script': 'Dancing Script',
     'Parisienne': 'Parisienne',
     'Allura': 'Allura',
+    'Satisfy': 'Satisfy',
+    'Rouge Script': 'Rouge Script',
+}
+
+# フォント表示名マッピング（シミュレーターと同じ「〜風」表記）
+FONT_DISPLAY_MAP = {
+    'Sacramento': 'Holiday風',
+    'Pinyon Script': 'Eyesome風',
+    'Satisfy': 'Mistrully風',
+    'Rouge Script': 'Amsterdam風',
 }
 
 # テンプレート
@@ -838,7 +848,9 @@ def create_pdf(order_data, temp_dir):
     c.setFont("Helvetica", 11)
     c.drawCentredString(PAGE_SIZE[0]/2, info_y - 25, f"Groom: {groom}  Bride: {bride}")
     c.drawCentredString(PAGE_SIZE[0]/2, info_y - 50, f"Date: {order_data['wedding_date']}")
-    c.drawCentredString(PAGE_SIZE[0]/2, info_y - 75, f"Font: {base_font}")
+    # フォント表示名（シミュレーターと同じ「〜風」表記を使用）
+    font_display_name = FONT_DISPLAY_MAP.get(base_font, base_font)
+    c.drawCentredString(PAGE_SIZE[0]/2, info_y - 75, f"Font: {font_display_name}")
 
     c.showPage()
 
