@@ -1067,8 +1067,13 @@ def create_pdf(order_data, temp_dir):
     body_text = sim_data.get('customText', '') if template_key == 'custom' else TEMPLATES.get(template_key, '')
     body_x = board_center_x + actual_board_w * ((sim_data.get('bodyX', 50) - 50) / 100)
     body_y_pct = sim_data.get('bodyY', 32) / 100
-    body_y = board_center_y + actual_board_h / 2 - actual_board_h * body_y_pct
+    body_y_base = board_center_y + actual_board_h / 2 - actual_board_h * body_y_pct
     body_size = 11 * (sim_data.get('bodySize', 115) / 100) * FONT_SCALE
+
+    # 重なり防止: タイトル下端から最低30px確保（PDF座標系ではY軸上向き）
+    title_bottom = title_y - title_size  # タイトルの下端
+    min_gap = 30 * FONT_SCALE  # 最小間隔
+    body_y = min(body_y_base, title_bottom - min_gap)  # 本文はタイトル下に配置
     body_line_height = sim_data.get('bodyLineHeight', 1.4)
     c.setFont("Helvetica", body_size)
     for i, line in enumerate(body_text.split('\n')):
