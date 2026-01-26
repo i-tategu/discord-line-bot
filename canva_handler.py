@@ -160,6 +160,101 @@ def px_to_emu(px):
     return int(px * EMU_PER_PX)
 
 
+def detect_board_shape(cutout_img):
+    """板の形状を検出（シミュレーターと同じロジック）
+
+    Returns:
+        dict: {
+            'type': 'portrait' | 'landscape' | 'square',
+            'aspectRatio': float,
+            'stretchFactor': float (portrait時のみ有効)
+        }
+    """
+    if cutout_img is None:
+        return {'type': 'square', 'aspectRatio': 1.0, 'stretchFactor': 0}
+
+    # 透明部分を除いた実際の板サイズを検出
+    if cutout_img.mode != 'RGBA':
+        cutout_img = cutout_img.convert('RGBA')
+
+    img_w, img_h = cutout_img.size
+    alpha = cutout_img.split()[3]
+    alpha_data = alpha.load()
+
+    # 非透明ピクセルの境界を検出
+    min_x, max_x, min_y, max_y = img_w, 0, img_h, 0
+    for py in range(img_h):
+        for px in range(img_w):
+            if alpha_data[px, py] > 10:
+                min_x = min(min_x, px)
+                max_x = max(max_x, px)
+                min_y = min(min_y, py)
+                max_y = max(max_y, py)
+
+    if max_x <= min_x or max_y <= min_y:
+        return {'type': 'square', 'aspectRatio': 1.0, 'stretchFactor': 0}
+
+    # 実際の板サイズ
+    board_w = max_x - min_x
+    board_h = max_y - min_y
+    aspect_ratio = board_w / board_h
+
+    # 形状判定（シミュレーターと同じ許容範囲0.15）
+    if aspect_ratio > 1.15:
+        shape_type = 'landscape'  # 横長
+    elif aspect_ratio < 0.85:
+        shape_type = 'portrait'   # 縦長
+    else:
+        shape_type = 'square'     # 正方形
+
+    # 縦長の場合のstretchFactor（縦横比から1を引いた値、最大3）
+    stretch_factor = 0
+    if shape_type == 'portrait':
+        stretch_factor = min((1 / aspect_ratio) - 1, 3)
+
+    print(f"[Shape] Detected: {shape_type}, aspectRatio={aspect_ratio:.2f}, stretchFactor={stretch_factor:.2f}")
+
+    return {
+        'type': shape_type,
+        'aspectRatio': aspect_ratio,
+        'stretchFactor': stretch_factor
+    }
+
+
+def get_portrait_layout_adjustments(stretch_factor):
+    """縦長板用のレイアウト調整値を取得（シミュレーター準拠）"""
+    return {
+        'titleY': 6,
+        'titleSize': 90,
+        'bodyY': 15,
+        'bodySize': 80,
+        'dateY': 50 + 8 * stretch_factor,
+        'dateSize': 85,
+        'nameY': 62 + 10 * stretch_factor,
+        'nameSize': 90,
+        'treeX': 0.5,
+        'treeY': 0.82,
+        'treeSize': 70,
+    }
+
+
+def get_landscape_layout_adjustments():
+    """横長板用のレイアウト調整値を取得"""
+    return {
+        'titleY': 20,
+        'titleSize': 95,
+        'bodyY': 30,
+        'bodySize': 90,
+        'dateY': 55,
+        'dateSize': 85,
+        'nameY': 68,
+        'nameSize': 90,
+        'treeX': 0.85,
+        'treeY': 0.5,
+        'treeSize': 60,
+    }
+
+
 def format_date(date_str, format_type):
     try:
         for fmt in ["%Y-%m-%d", "%Y.%m.%d", "%Y/%m/%d"]:
@@ -684,10 +779,26 @@ def create_pptx(order_data, temp_dir):
     # 背景画像をダウンロード（透明度を保持）
     cutout_path = download_image(cutout_urls.get(background, cutout_urls['product']), temp_dir, preserve_transparency=True)
 
+    # 板形状検出（ダウンロード後に実行）
+    board_shape = {'type': 'square', 'aspectRatio': 1.0, 'stretchFactor': 0}
+    layout_adj = {}  # レイアウト調整値
+
     if cutout_path and os.path.exists(cutout_path):
         try:
             bg_img = Image.open(cutout_path)
             bg_width, bg_height = bg_img.size
+
+            # 板形状検出
+            board_shape = detect_board_shape(bg_img)
+
+            # 形状に応じたレイアウト調整を取得
+            if board_shape['type'] == 'portrait':
+                layout_adj = get_portrait_layout_adjustments(board_shape['stretchFactor'])
+                print(f"[Layout] Portrait adjustments applied: titleY={layout_adj['titleY']}, nameY={layout_adj['nameY']}")
+            elif board_shape['type'] == 'landscape':
+                layout_adj = get_landscape_layout_adjustments()
+                print(f"[Layout] Landscape adjustments applied")
+
             base_scale = 0.95
             img_ratio = bg_width / bg_height
             max_width = SLIDE_WIDTH_PX * base_scale
@@ -716,13 +827,27 @@ def create_pptx(order_data, temp_dir):
         except Exception as e:
             print(f"[WARN] Background image error: {e}")
 
+    # レイアウト調整を適用（sim_dataの値がデフォルトの場合のみ上書き）
+    def get_adjusted_value(key, default, is_size=False):
+        """sim_dataの値またはレイアウト調整値を取得"""
+        sim_val = sim_data.get(key)
+        # sim_dataに明示的に設定されている場合はそれを使用
+        if sim_val is not None and sim_val != default:
+            return sim_val
+        # レイアウト調整がある場合はそれを使用
+        if key in layout_adj:
+            return layout_adj[key]
+        return default
+
     # タイトル（独立したテキストボックス）
     title_font = get_element_font('title')
     title_key = sim_data.get('title', 'wedding')
     title_text = sim_data.get('customTitle', '') if title_key == 'custom' else TITLES.get(title_key, 'Wedding Certificate')
     title_x = SLIDE_WIDTH_PX * (sim_data.get('titleX', 50) / 100)
-    title_y = SLIDE_HEIGHT_PX * (sim_data.get('titleY', 22) / 100)
-    title_size = 24 * (sim_data.get('titleSize', 100) / 100) * FONT_SCALE
+    title_y_pct = get_adjusted_value('titleY', 22)
+    title_y = SLIDE_HEIGHT_PX * (title_y_pct / 100)
+    title_size_pct = get_adjusted_value('titleSize', 100)
+    title_size = 24 * (title_size_pct / 100) * FONT_SCALE
     title_box = add_text_box(slide2, title_text, title_x, title_y, title_font, title_size, center=True, color_rgb=text_color)
     # タイトルボックスの下端を計算
     title_bottom = title_y + title_size
@@ -732,11 +857,13 @@ def create_pptx(order_data, temp_dir):
     template_key = sim_data.get('template', 'holy')
     body_text = sim_data.get('customText', '') if template_key == 'custom' else TEMPLATES.get(template_key, '')
     body_x = SLIDE_WIDTH_PX * (sim_data.get('bodyX', 50) / 100)
-    body_y_base = SLIDE_HEIGHT_PX * (sim_data.get('bodyY', 32) / 100)
+    body_y_pct = get_adjusted_value('bodyY', 32)
+    body_y_base = SLIDE_HEIGHT_PX * (body_y_pct / 100)
     # タイトルと本文が重ならないように最小間隔を確保
     min_gap = 30 * FONT_SCALE  # 最小間隔（スケール適用）
     body_y = max(body_y_base, title_bottom + min_gap)
-    body_size = 11 * (sim_data.get('bodySize', 115) / 100) * FONT_SCALE
+    body_size_pct = get_adjusted_value('bodySize', 115)
+    body_size = 11 * (body_size_pct / 100) * FONT_SCALE
     body_line_height = sim_data.get('bodyLineHeight', 1.4)
     if body_text:
         add_multiline_text_box(slide2, body_text, body_x, body_y, body_font, body_size,
@@ -747,18 +874,21 @@ def create_pptx(order_data, temp_dir):
     date_format_key = sim_data.get('dateFormat', 'western')
     formatted_date = sim_data.get('customDate', '') if date_format_key == 'custom' else format_date(order_data['wedding_date'], date_format_key)
     date_x = SLIDE_WIDTH_PX * (sim_data.get('dateX', 50) / 100)
-    date_y = SLIDE_HEIGHT_PX * (sim_data.get('dateY', 60) / 100)
-    date_size = 18 * (sim_data.get('dateSize', 85) / 100) * FONT_SCALE
+    date_y_pct = get_adjusted_value('dateY', 60)
+    date_y = SLIDE_HEIGHT_PX * (date_y_pct / 100)
+    date_size_pct = get_adjusted_value('dateSize', 85)
+    date_size = 18 * (date_size_pct / 100) * FONT_SCALE
     if formatted_date:
         add_text_box(slide2, formatted_date, date_x, date_y, date_font, date_size, center=True, color_rgb=text_color)
 
     # 名前
     name_font = get_element_font('name')
     name_x_pct = sim_data.get('nameX', 50) / 100
-    name_y_pct = sim_data.get('nameY', 74) / 100
-    name_size = 32 * (sim_data.get('nameSize', 90) / 100) * FONT_SCALE
+    name_y_pct = get_adjusted_value('nameY', 74)
+    name_size_pct = get_adjusted_value('nameSize', 90)
+    name_size = 32 * (name_size_pct / 100) * FONT_SCALE
     name_center_x = SLIDE_WIDTH_PX * name_x_pct
-    name_y = SLIDE_HEIGHT_PX * name_y_pct
+    name_y = SLIDE_HEIGHT_PX * (name_y_pct / 100)
 
     groom_width_approx = len(groom) * name_size * 0.6
     amp_width_approx = name_size * 2
@@ -779,12 +909,18 @@ def create_pptx(order_data, temp_dir):
     # ツリー
     if sim_data.get('showTree', False):
         tree_type = sim_data.get('treeType', 'simple')
-        tree_x_pct = sim_data.get('treeX', 0.75)
-        tree_y_pct = sim_data.get('treeY', 0.65)
-        tree_size_pct = sim_data.get('treeSize', 80) / 100
+        # 板形状に応じたツリー位置調整
+        default_tree_x = layout_adj.get('treeX', 0.75) if layout_adj else 0.75
+        default_tree_y = layout_adj.get('treeY', 0.65) if layout_adj else 0.65
+        default_tree_size = layout_adj.get('treeSize', 80) if layout_adj else 80
+
+        # sim_dataに明示的な値がある場合はそちらを優先
+        tree_x_pct = sim_data.get('treeX') if sim_data.get('treeX') is not None else default_tree_x
+        tree_y_pct = sim_data.get('treeY') if sim_data.get('treeY') is not None else default_tree_y
+        tree_size_pct = (sim_data.get('treeSize') if sim_data.get('treeSize') is not None else default_tree_size) / 100
 
         tree_url = f"{TREE_IMAGES_URL}/tree-{tree_type}.png"
-        print(f"[TREE] Downloading: {tree_url}")
+        print(f"[TREE] Downloading: {tree_url} (shape: {board_shape['type']}, pos: {tree_x_pct:.2f}, {tree_y_pct:.2f})")
 
         try:
             # 直接ダウンロードしてPNG形式を明示的に保持
