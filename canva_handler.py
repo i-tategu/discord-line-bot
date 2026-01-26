@@ -830,6 +830,7 @@ def create_pdf(order_data, temp_dir):
     c.setFont("Helvetica", 11)
     c.drawCentredString(PAGE_SIZE[0]/2, info_y - 25, f"Groom: {groom}  Bride: {bride}")
     c.drawCentredString(PAGE_SIZE[0]/2, info_y - 50, f"Date: {order_data['wedding_date']}")
+    c.drawCentredString(PAGE_SIZE[0]/2, info_y - 75, f"Font: {base_font}")
 
     c.showPage()
 
@@ -999,17 +1000,21 @@ def create_pdf(order_data, temp_dir):
                 tree_path = os.path.join(temp_dir, 'tree.png')
                 tree_img.save(tree_path, 'PNG')
 
-                # 描画位置
+                # シミュレーターと同じ計算: img.width * (treeSize/100) * 0.08
+                # PDFページサイズに合わせてスケール
                 tree_w, tree_h = tree_img.size
-                base_size = min(PAGE_SIZE) * 0.3 * tree_size_pct
-                draw_w = base_size
-                draw_h = base_size * (tree_h / tree_w)
+                sim_scale = tree_size_pct * 0.08  # シミュレーターと同じ係数
+                # シミュレーターのキャンバスは約500px、PDFは1000pxなのでx2
+                draw_w = tree_w * sim_scale * (PAGE_SIZE[0] / 500)
+                draw_h = tree_h * sim_scale * (PAGE_SIZE[1] / 500)
+
+                # 位置計算（ページ相対、シミュレーターと同じ）
                 x = PAGE_SIZE[0] * tree_x_pct - draw_w / 2
                 y = PAGE_SIZE[1] * (1 - tree_y_pct) - draw_h / 2
 
                 # mask='auto' でPNG透明度を自動適用
                 c.drawImage(tree_path, x, y, width=draw_w, height=draw_h, mask='auto')
-                print(f"[PDF] Tree added at ({x:.0f}, {y:.0f}) with mask='auto'")
+                print(f"[PDF] Tree: size={tree_size_pct*100:.0f}%, draw={draw_w:.0f}x{draw_h:.0f}, pos=({x:.0f}, {y:.0f})")
         except Exception as e:
             print(f"[WARN] Tree error: {e}")
             import traceback
@@ -1094,10 +1099,11 @@ def send_discord_notification(order_data, design, webhook_url):
 
 
 def mark_order_processed(order_id, design_url, wc_url, wc_key, wc_secret):
-    """注文を処理済みにマーク"""
+    """注文を処理済みにマーク + ステータスを「デザイン打ち合わせ中」に変更"""
     url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}"
 
     data = {
+        "status": "design-in-progress",  # デザイン打ち合わせ中
         "meta_data": [
             {"key": "canva_automation_done", "value": "1"},
             {"key": "canva_design_url", "value": design_url},
@@ -1110,7 +1116,7 @@ def mark_order_processed(order_id, design_url, wc_url, wc_key, wc_secret):
         if response.status_code != 200:
             print(f"[WC Update] Error: {response.text[:500]}")
             return False
-        print(f"[WC Update] Order #{order_id} marked as processed")
+        print(f"[WC Update] Order #{order_id} marked as processed, status → design-in-progress")
         return True
     except Exception as e:
         print(f"[WC Update] Exception: {e}")
