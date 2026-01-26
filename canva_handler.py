@@ -1125,7 +1125,8 @@ def send_discord_notification(order_data, design, webhook_url):
 
 def mark_order_processed(order_id, design_url, wc_url, wc_key, wc_secret):
     """注文を処理済みにマーク + ステータスを「デザイン打ち合わせ中」に変更"""
-    url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}"
+    # WooCommerce REST APIはクエリパラメータで認証
+    url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}?consumer_key={wc_key}&consumer_secret={wc_secret}"
 
     data = {
         "status": "design-in-progress",  # デザイン打ち合わせ中
@@ -1136,7 +1137,7 @@ def mark_order_processed(order_id, design_url, wc_url, wc_key, wc_secret):
     }
 
     try:
-        response = requests.put(url, json=data, auth=(wc_key, wc_secret))
+        response = requests.put(url, json=data)
         print(f"[WC Update] Status: {response.status_code}")
         if response.status_code != 200:
             print(f"[WC Update] Error: {response.text[:500]}")
