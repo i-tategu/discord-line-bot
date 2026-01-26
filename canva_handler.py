@@ -1534,7 +1534,29 @@ def send_shipping_notification(order_data, order, bot_token):
             {"name": "💰 金額", "value": f"¥{int(float(order_total)):,} / {payment_method}", "inline": True},
             {"name": "〒 住所", "value": f"{postcode} {full_address}" if postcode else full_address, "inline": False},
         ],
+        "footer": {"text": f"order_id:{order_data['order_id']}"},
     }
+
+    # ボタン（B2クラウド用）
+    components = [
+        {
+            "type": 1,  # Action Row
+            "components": [
+                {
+                    "type": 2,  # Button
+                    "style": 1,  # Primary (青)
+                    "label": "📋 B2用コピー",
+                    "custom_id": f"b2_copy_{order_data['order_id']}",
+                },
+                {
+                    "type": 2,  # Button
+                    "style": 3,  # Success (緑)
+                    "label": "✅ 発送完了",
+                    "custom_id": f"shipped_{order_data['order_id']}",
+                },
+            ]
+        }
+    ]
 
     # Discord Bot APIで送信
     url = f"https://discord.com/api/v10/channels/{DISCORD_SHIPPING_CHANNEL_ID}/messages"
@@ -1544,7 +1566,7 @@ def send_shipping_notification(order_data, order, bot_token):
     }
 
     try:
-        response = requests.post(url, json={"embeds": [embed]}, headers=headers)
+        response = requests.post(url, json={"embeds": [embed], "components": components}, headers=headers)
         if response.status_code in [200, 201]:
             print(f"[Shipping] Notification sent for order #{order_data['order_id']}")
             return True

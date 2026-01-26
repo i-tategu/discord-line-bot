@@ -470,6 +470,154 @@ async def on_message(message):
                 await message.add_reaction("🖼️")
 
 
+# ================== Button Interactions ==================
+
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    """ボタンクリック処理"""
+    if interaction.type != discord.InteractionType.component:
+        return
+
+    custom_id = interaction.data.get("custom_id", "")
+
+    # B2用コピーボタン
+    if custom_id.startswith("b2_copy_"):
+        order_id = custom_id.replace("b2_copy_", "")
+        await handle_b2_copy(interaction, order_id)
+
+    # 発送完了ボタン
+    elif custom_id.startswith("shipped_"):
+        order_id = custom_id.replace("shipped_", "")
+        await handle_shipped(interaction, order_id)
+
+
+async def handle_b2_copy(interaction: discord.Interaction, order_id: str):
+    """B2クラウド用データを表示"""
+    await interaction.response.defer(ephemeral=True)
+
+    # WooCommerceから注文情報取得
+    wc_url = get_wc_url()
+    wc_key = get_wc_consumer_key()
+    wc_secret = get_wc_consumer_secret()
+
+    if not all([wc_url, wc_key, wc_secret]):
+        await interaction.followup.send("WooCommerce設定がありません", ephemeral=True)
+        return
+
+    try:
+        url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}"
+        response = requests.get(url, auth=(wc_key, wc_secret))
+        if response.status_code != 200:
+            await interaction.followup.send(f"注文取得失敗: {response.status_code}", ephemeral=True)
+            return
+
+        order = response.json()
+        billing = order.get('billing', {})
+        shipping = order.get('shipping', {})
+
+        # 発送先情報
+        postcode = shipping.get('postcode') or billing.get('postcode', '')
+        state = shipping.get('state') or billing.get('state', '')
+        city = shipping.get('city') or billing.get('city', '')
+        address1 = shipping.get('address_1') or billing.get('address_1', '')
+        address2 = shipping.get('address_2') or billing.get('address_2', '')
+
+        # 都道府県コード変換
+        JP_STATES = {
+            'JP01': '北海道', 'JP02': '青森県', 'JP03': '岩手県', 'JP04': '宮城県',
+            'JP05': '秋田県', 'JP06': '山形県', 'JP07': '福島県', 'JP08': '茨城県',
+            'JP09': '栃木県', 'JP10': '群馬県', 'JP11': '埼玉県', 'JP12': '千葉県',
+            'JP13': '東京都', 'JP14': '神奈川県', 'JP15': '新潟県', 'JP16': '富山県',
+            'JP17': '石川県', 'JP18': '福井県', 'JP19': '山梨県', 'JP20': '長野県',
+            'JP21': '岐阜県', 'JP22': '静岡県', 'JP23': '愛知県', 'JP24': '三重県',
+            'JP25': '滋賀県', 'JP26': '京都府', 'JP27': '大阪府', 'JP28': '兵庫県',
+            'JP29': '奈良県', 'JP30': '和歌山県', 'JP31': '鳥取県', 'JP32': '島根県',
+            'JP33': '岡山県', 'JP34': '広島県', 'JP35': '山口県', 'JP36': '徳島県',
+            'JP37': '香川県', 'JP38': '愛媛県', 'JP39': '高知県', 'JP40': '福岡県',
+            'JP41': '佐賀県', 'JP42': '長崎県', 'JP43': '熊本県', 'JP44': '大分県',
+            'JP45': '宮崎県', 'JP46': '鹿児島県', 'JP47': '沖縄県'
+        }
+        state_name = JP_STATES.get(state, state)
+
+        full_address = f"{city}{address1}"
+        if address2:
+            full_address += f" {address2}"
+
+        customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
+        customer_phone = billing.get('phone', '')
+
+        # 商品名
+        products = [item.get('name', '') for item in order.get('line_items', [])]
+        product_name = products[0] if products else "一枚板結婚証明書"
+
+        # B2クラウド用フォーマット（コピペ用）
+        b2_data = f"""```
+【B2クラウド入力用】
+━━━━━━━━━━━━━━━━━━━━
+郵便番号: {postcode}
+都道府県: {state_name}
+市区町村: {city}
+番地: {address1}
+建物名等: {address2 or ""}
+━━━━━━━━━━━━━━━━━━━━
+届け先名: {customer_name}
+電話番号: {customer_phone}
+━━━━━━━━━━━━━━━━━━━━
+品名: {product_name}
+個数: 1
+━━━━━━━━━━━━━━━━━━━━
+```"""
+
+        await interaction.followup.send(b2_data, ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(f"エラー: {e}", ephemeral=True)
+
+
+async def handle_shipped(interaction: discord.Interaction, order_id: str):
+    """発送完了処理"""
+    await interaction.response.defer()
+
+    # WooCommerceのステータス更新
+    wc_url = get_wc_url()
+    wc_key = get_wc_consumer_key()
+    wc_secret = get_wc_consumer_secret()
+
+    if not all([wc_url, wc_key, wc_secret]):
+        await interaction.followup.send("WooCommerce設定がありません")
+        return
+
+    try:
+        url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}"
+        response = requests.put(url, auth=(wc_key, wc_secret), json={"status": "completed"})
+
+        if response.status_code == 200:
+            # メッセージを更新（ボタン無効化 + 色変更）
+            message = interaction.message
+            embed = message.embeds[0].to_dict() if message.embeds else {}
+            embed["title"] = embed.get("title", "").replace("🟡 未発送", "✅ 発送済み")
+            embed["color"] = 0x2ECC71  # 緑
+
+            # ボタンを無効化
+            disabled_components = [
+                {
+                    "type": 1,
+                    "components": [
+                        {"type": 2, "style": 2, "label": "📋 B2用コピー", "custom_id": f"b2_copy_{order_id}", "disabled": True},
+                        {"type": 2, "style": 2, "label": "✅ 発送完了", "custom_id": f"shipped_{order_id}", "disabled": True},
+                    ]
+                }
+            ]
+
+            await message.edit(embed=discord.Embed.from_dict(embed), components=disabled_components)
+            await interaction.followup.send(f"✅ 注文 #{order_id} を発送済みに更新しました")
+        else:
+            await interaction.followup.send(f"ステータス更新失敗: {response.status_code}")
+
+    except Exception as e:
+        await interaction.followup.send(f"エラー: {e}")
+
+
 # ================== Slash Commands ==================
 
 @bot.tree.command(name="status", description="顧客のステータスを変更")
