@@ -88,9 +88,9 @@ def get_canva_client_secret():
 CUTOUT_BASE_URL = "https://i-tategu-shop.com/wp-content/themes/i-tategu/assets/images/cutouts"
 TREE_IMAGES_URL = "https://i-tategu-shop.com/wp-content/themes/i-tategu/assets/images"
 
-# スライドサイズ
+# スライドサイズ（シミュレーターと同じ4:3アスペクト比）
 SLIDE_WIDTH_PX = 1000
-SLIDE_HEIGHT_PX = 1000
+SLIDE_HEIGHT_PX = 750  # 4:3 ratio (simulator uses 500x375)
 EMU_PER_PX = 914400 / 96
 
 # フォントマッピング
@@ -702,8 +702,11 @@ def create_pptx(order_data, temp_dir):
 
             draw_width = base_width * board_size_pct
             draw_height = base_height * board_size_pct
-            img_x = (SLIDE_WIDTH_PX - draw_width) / 2
-            img_y = (SLIDE_HEIGHT_PX - draw_height) / 2
+            # boardX, boardY は中心位置（0.5 = 中央）
+            board_x_pct = sim_data.get('boardX', 0.5)
+            board_y_pct = sim_data.get('boardY', 0.5)
+            img_x = SLIDE_WIDTH_PX * board_x_pct - draw_width / 2
+            img_y = SLIDE_HEIGHT_PX * board_y_pct - draw_height / 2
 
             slide2.shapes.add_picture(
                 cutout_path,
@@ -731,7 +734,7 @@ def create_pptx(order_data, temp_dir):
     body_x = SLIDE_WIDTH_PX * (sim_data.get('bodyX', 50) / 100)
     body_y_base = SLIDE_HEIGHT_PX * (sim_data.get('bodyY', 32) / 100)
     # タイトルと本文が重ならないように最小間隔を確保
-    min_gap = 30  # 最小30pxの間隔
+    min_gap = 30 * FONT_SCALE  # 最小間隔（スケール適用）
     body_y = max(body_y_base, title_bottom + min_gap)
     body_size = 11 * (sim_data.get('bodySize', 115) / 100) * FONT_SCALE
     body_line_height = sim_data.get('bodyLineHeight', 1.4)
@@ -814,11 +817,16 @@ def create_pptx(order_data, temp_dir):
                 print(f"[TREE] PNG buffer size: {len(tree_buffer.getvalue()) / 1024:.1f}KB")
 
                 tree_width, tree_height = tree_img.size
-                base_tree_size = min(SLIDE_WIDTH_PX, SLIDE_HEIGHT_PX) * 0.3
-                draw_tree_width = base_tree_size * tree_size_pct
+                # シミュレーターと同じ計算: img.width * (treeSize/100) * 0.08
+                # 元のツリー画像サイズは3000x3000、シミュレーターのキャンバスは500px幅
+                TREE_ORIGINAL_SIZE = 3000  # ツリー画像の元サイズ
+                TREE_SCALE_FACTOR = 0.08   # シミュレーターの係数
+                SIMULATOR_WIDTH = 500      # シミュレーターのキャンバス幅
+                draw_tree_width = TREE_ORIGINAL_SIZE * tree_size_pct * TREE_SCALE_FACTOR * (SLIDE_WIDTH_PX / SIMULATOR_WIDTH)
                 draw_tree_height = draw_tree_width * (tree_height / tree_width)
                 tree_x = SLIDE_WIDTH_PX * tree_x_pct - draw_tree_width / 2
                 tree_y = SLIDE_HEIGHT_PX * tree_y_pct - draw_tree_height / 2
+                print(f"[TREE] Size: {draw_tree_width:.0f}x{draw_tree_height:.0f}px at ({tree_x:.0f}, {tree_y:.0f})")
 
                 # BytesIOから直接追加
                 slide2.shapes.add_picture(
