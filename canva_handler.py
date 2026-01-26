@@ -580,10 +580,33 @@ def create_pptx(order_data, temp_dir):
                  SLIDE_WIDTH_PX/2, info_y, 'Meiryo UI', 13, center=True, color_rgb=(60, 60, 60))
 
     info_y += 26
-    font_info = sim_data.get('baseFont', 'Alex Brush')
+    base_font_display = sim_data.get('baseFont', 'Alex Brush')
     template_names = {'holy': '教会式①', 'happy': '教会式②', 'promise': '人前式', 'custom': 'カスタム'}
     template_info = template_names.get(sim_data.get('template', 'holy'), '教会式①')
-    add_text_box(slide1, f"フォント: {font_info}　　本文: {template_info}",
+
+    # 各要素のフォントをチェック（ベースと異なる場合のみ表示）
+    font_differences = []
+    title_font = sim_data.get('titleFont', '')
+    body_font = sim_data.get('bodyFont', '')
+    date_font = sim_data.get('dateFont', '')
+    name_font = sim_data.get('nameFont', '')
+
+    if title_font and title_font != base_font_display:
+        font_differences.append(f"タイトル:{title_font}")
+    if body_font and body_font != base_font_display:
+        font_differences.append(f"本文:{body_font}")
+    if date_font and date_font != base_font_display:
+        font_differences.append(f"日付:{date_font}")
+    if name_font and name_font != base_font_display:
+        font_differences.append(f"名前:{name_font}")
+
+    # フォント表示文字列を構築
+    if font_differences:
+        font_detail = f"フォント: {base_font_display}（{' / '.join(font_differences)}）"
+    else:
+        font_detail = f"フォント: {base_font_display}"
+
+    add_text_box(slide1, f"{font_detail}　　本文: {template_info}",
                  SLIDE_WIDTH_PX/2, info_y, 'Meiryo UI', 11, center=True, color_rgb=(100, 100, 100))
 
     # ========== 2ページ目: 背景cutout + テキスト ==========
