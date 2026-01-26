@@ -872,6 +872,37 @@ def api_canva_debug_token():
     return jsonify(debug_info)
 
 
+@api.route("/api/canva/update-tokens", methods=["POST"])
+def api_canva_update_tokens():
+    """Canvaトークンを手動で更新"""
+    data = request.json
+    access_token = data.get("access_token")
+    refresh_token = data.get("refresh_token")
+
+    updated = {}
+    if access_token:
+        os.environ['CANVA_ACCESS_TOKEN'] = access_token
+        updated['access_token'] = f"Set ({len(access_token)} chars)"
+    if refresh_token:
+        os.environ['CANVA_REFRESH_TOKEN'] = refresh_token
+        updated['refresh_token'] = f"Set ({len(refresh_token)} chars)"
+
+    return jsonify({"success": True, "updated": updated})
+
+
+@api.route("/api/canva/current-tokens", methods=["GET"])
+def api_canva_current_tokens():
+    """現在のCanvaトークン情報を取得（先頭50文字のみ）"""
+    access = get_canva_access_token()
+    refresh = get_canva_refresh_token()
+    return jsonify({
+        "access_token_preview": access[:50] + "..." if access and len(access) > 50 else access,
+        "access_token_len": len(access) if access else 0,
+        "refresh_token_preview": refresh[:50] + "..." if refresh and len(refresh) > 50 else refresh,
+        "refresh_token_len": len(refresh) if refresh else 0,
+    })
+
+
 def run_api():
     """API サーバー起動"""
     port = int(os.getenv("PORT", 5701))

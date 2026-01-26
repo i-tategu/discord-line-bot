@@ -275,7 +275,7 @@ def download_image(url, temp_dir, max_size=800, preserve_transparency=False):
 
 
 def refresh_canva_token(refresh_token):
-    """Canvaトークンをリフレッシュ"""
+    """Canvaトークンをリフレッシュし、環境変数に保存"""
     url = 'https://api.canva.com/rest/v1/oauth/token'
     client_id = get_canva_client_id()
     client_secret = get_canva_client_secret()
@@ -297,10 +297,18 @@ def refresh_canva_token(refresh_token):
 
     if response.status_code == 200:
         tokens = response.json()
-        print(f"[Canva Token] Refresh successful!")
+        new_access = tokens.get('access_token')
+        new_refresh = tokens.get('refresh_token', refresh_token)
+
+        # 環境変数を更新（プロセス内で永続化）
+        os.environ['CANVA_ACCESS_TOKEN'] = new_access
+        os.environ['CANVA_REFRESH_TOKEN'] = new_refresh
+        print(f"[Canva Token] Refresh successful! Tokens updated in memory.")
+        print(f"[Canva Token] New refresh token (first 50 chars): {new_refresh[:50]}...")
+
         return {
-            'access_token': tokens.get('access_token'),
-            'refresh_token': tokens.get('refresh_token', refresh_token)
+            'access_token': new_access,
+            'refresh_token': new_refresh
         }
 
     print(f"[Canva Token] Refresh failed: {response.text[:500]}")
