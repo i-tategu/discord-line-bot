@@ -22,6 +22,13 @@ from pptx.enum.text import PP_ALIGN
 # Pillow
 from PIL import Image
 
+# reportlab for PDF creation
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas as pdf_canvas
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
 # 設定（環境変数から取得 - 遅延読み込み）
 def get_canva_client_id():
     return os.getenv("CANVA_CLIENT_ID", "OC-AZvUVtxGhbOD")
@@ -300,14 +307,22 @@ def refresh_canva_token(refresh_token):
     return None
 
 
-def import_to_canva(pptx_path, title, access_token, refresh_token, retry=False):
-    """CanvaにPowerPointをインポート（エラー情報も返す）"""
+def import_to_canva(file_path, title, access_token, refresh_token, retry=False):
+    """CanvaにファイルをインポートPDF/PPTX対応（エラー情報も返す）"""
     url = "https://api.canva.com/rest/v1/imports"
     title_base64 = base64.b64encode(title.encode("utf-8")).decode("utf-8")
 
+    # ファイル形式を検出してMIMEタイプを設定
+    if file_path.endswith('.pdf'):
+        mime_type = "application/pdf"
+        print(f"[Canva Import] Using PDF format")
+    else:
+        mime_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        print(f"[Canva Import] Using PPTX format")
+
     metadata = {
         "title_base64": title_base64,
-        "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        "mime_type": mime_type
     }
 
     headers = {
@@ -316,7 +331,7 @@ def import_to_canva(pptx_path, title, access_token, refresh_token, retry=False):
         "Import-Metadata": json.dumps(metadata)
     }
 
-    with open(pptx_path, "rb") as f:
+    with open(file_path, "rb") as f:
         response = requests.post(url, headers=headers, data=f)
 
     print(f"[Canva Import] Status: {response.status_code}")
@@ -326,7 +341,7 @@ def import_to_canva(pptx_path, title, access_token, refresh_token, retry=False):
         print("[INFO] Token expired, refreshing...")
         new_tokens = refresh_canva_token(refresh_token)
         if new_tokens:
-            return import_to_canva(pptx_path, title, new_tokens['access_token'], new_tokens['refresh_token'], retry=True)
+            return import_to_canva(file_path, title, new_tokens['access_token'], new_tokens['refresh_token'], retry=True)
         return None, {"error": "Token refresh failed"}
 
     if response.status_code != 200:
@@ -748,6 +763,239 @@ def create_pptx(order_data, temp_dir):
     return output_path
 
 
+def create_pdf(order_data, temp_dir):
+    """PDFを作成（透明度対応版）"""
+    print(f"[Canva] Creating PDF for order #{order_data['order_id']}...")
+
+    sim_data = order_data['sim_data']
+    sim_image = order_data['sim_image']
+    groom = sim_data.get('groomName', '')
+    bride = sim_data.get('brideName', '')
+
+    # PDFページサイズ（ポイント単位、1000x1000px相当）
+    PAGE_SIZE = (1000, 1000)
+
+    output_path = os.path.join(temp_dir, f"order_{order_data['order_id']}.pdf")
+    c = pdf_canvas.Canvas(output_path, pagesize=PAGE_SIZE)
+
+    # cutout画像のURLを取得
+    background = sim_data.get('background', 'product')
+    cutout_urls = {
+        'product': find_cutout_url(order_data['board_name'], order_data['board_number'], order_data['board_size'], 'product'),
+        'product_back': find_cutout_url(order_data['board_name'], order_data['board_number'], order_data['board_size'], 'product_back'),
+        'noclear': find_cutout_url(order_data['board_name'], order_data['board_number'], order_data['board_size'], 'noclear'),
+        'noclear_back': find_cutout_url(order_data['board_name'], order_data['board_number'], order_data['board_size'], 'noclear_back'),
+    }
+
+    base_font = sim_data.get('baseFont', 'Alex Brush')
+    text_color_hex = (42/255, 24/255, 16/255)  # RGB正規化
+
+    # ========== 1ページ目: シミュレーション画像 + 注文情報 ==========
+    if sim_image:
+        try:
+            if sim_image.startswith('http'):
+                response = requests.get(sim_image, timeout=30)
+                img = Image.open(BytesIO(response.content))
+            else:
+                if ',' in sim_image:
+                    sim_image = sim_image.split(',')[1]
+                img_data = base64.b64decode(sim_image)
+                img = Image.open(BytesIO(img_data))
+
+            # リサイズ
+            max_size = 700
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                img = img.resize(new_size, Image.LANCZOS)
+
+            # 一時保存
+            sim_path = os.path.join(temp_dir, 'sim_image.png')
+            img.save(sim_path, 'PNG')
+
+            # 描画位置計算（PDFは左下原点）
+            img_width, img_height = img.size
+            x = (PAGE_SIZE[0] - img_width) / 2
+            y = PAGE_SIZE[1] - img_height - 50  # 上から50px下
+
+            c.drawImage(sim_path, x, y, width=img_width, height=img_height)
+        except Exception as e:
+            print(f"[WARN] Sim image error: {e}")
+
+    # 注文情報テキスト
+    c.setFillColorRGB(0.16, 0.16, 0.16)
+    c.setFont("Helvetica", 14)
+    info_y = 150
+    c.drawCentredString(PAGE_SIZE[0]/2, info_y, f"Order #{order_data['order_id']} - {order_data['board_name']} No.{order_data['board_number']}")
+    c.setFont("Helvetica", 11)
+    c.drawCentredString(PAGE_SIZE[0]/2, info_y - 25, f"Groom: {groom}  Bride: {bride}")
+    c.drawCentredString(PAGE_SIZE[0]/2, info_y - 50, f"Date: {order_data['wedding_date']}")
+
+    c.showPage()
+
+    # ========== 2ページ目: 背景cutout + テキスト + ツリー ==========
+    board_size_pct = sim_data.get('boardSize', 130) / 100
+
+    # 背景cutout画像
+    cutout_url = cutout_urls.get(background, cutout_urls['product'])
+    try:
+        response = requests.get(cutout_url, timeout=30)
+        if response.status_code == 200:
+            cutout_img = Image.open(BytesIO(response.content))
+            if cutout_img.mode != 'RGBA':
+                cutout_img = cutout_img.convert('RGBA')
+
+            # リサイズ
+            max_size = 800
+            if max(cutout_img.size) > max_size:
+                ratio = max_size / max(cutout_img.size)
+                new_size = (int(cutout_img.size[0] * ratio), int(cutout_img.size[1] * ratio))
+                cutout_img = cutout_img.resize(new_size, Image.LANCZOS)
+
+            cutout_path = os.path.join(temp_dir, 'cutout_bg.png')
+            cutout_img.save(cutout_path, 'PNG')
+
+            # 描画
+            img_w, img_h = cutout_img.size
+            draw_w = img_w * board_size_pct
+            draw_h = img_h * board_size_pct
+            x = (PAGE_SIZE[0] - draw_w) / 2
+            y = (PAGE_SIZE[1] - draw_h) / 2
+
+            c.drawImage(cutout_path, x, y, width=draw_w, height=draw_h, mask='auto')
+            print(f"[PDF] Cutout added with mask='auto' for transparency")
+    except Exception as e:
+        print(f"[WARN] Cutout error: {e}")
+
+    # テキスト要素（簡略化）
+    c.setFillColorRGB(*text_color_hex)
+
+    # タイトル
+    title_key = sim_data.get('title', 'wedding')
+    title_text = sim_data.get('customTitle', '') if title_key == 'custom' else TITLES.get(title_key, 'Wedding Certificate')
+    title_y = PAGE_SIZE[1] * (1 - sim_data.get('titleY', 22) / 100)
+    c.setFont("Helvetica", 24)
+    c.drawCentredString(PAGE_SIZE[0]/2, title_y, title_text)
+
+    # 本文
+    template_key = sim_data.get('template', 'holy')
+    body_text = sim_data.get('customText', '') if template_key == 'custom' else TEMPLATES.get(template_key, '')
+    body_y = PAGE_SIZE[1] * (1 - sim_data.get('bodyY', 32) / 100)
+    c.setFont("Helvetica", 11)
+    for i, line in enumerate(body_text.split('\n')):
+        c.drawCentredString(PAGE_SIZE[0]/2, body_y - i*16, line.strip())
+
+    # 日付
+    date_format_key = sim_data.get('dateFormat', 'western')
+    formatted_date = sim_data.get('customDate', '') if date_format_key == 'custom' else format_date(order_data['wedding_date'], date_format_key)
+    date_y = PAGE_SIZE[1] * (1 - sim_data.get('dateY', 60) / 100)
+    c.setFont("Helvetica", 18)
+    c.drawCentredString(PAGE_SIZE[0]/2, date_y, formatted_date)
+
+    # 名前
+    name_y = PAGE_SIZE[1] * (1 - sim_data.get('nameY', 74) / 100)
+    c.setFont("Helvetica", 28)
+    name_text = f"{groom}  &  {bride}"
+    c.drawCentredString(PAGE_SIZE[0]/2, name_y, name_text)
+
+    # ツリー画像（透明度保持）
+    if sim_data.get('showTree', False):
+        tree_type = sim_data.get('treeType', 'simple')
+        tree_x_pct = sim_data.get('treeX', 0.75)
+        tree_y_pct = sim_data.get('treeY', 0.65)
+        tree_size_pct = sim_data.get('treeSize', 80) / 100
+
+        tree_url = f"{TREE_IMAGES_URL}/tree-{tree_type}.png"
+        print(f"[PDF] Downloading tree: {tree_url}")
+
+        try:
+            response = requests.get(tree_url, timeout=30)
+            if response.status_code == 200:
+                tree_img = Image.open(BytesIO(response.content))
+                print(f"[PDF] Tree original: {tree_img.size}, mode={tree_img.mode}")
+
+                # リサイズ
+                max_size = 400
+                if max(tree_img.size) > max_size:
+                    ratio = max_size / max(tree_img.size)
+                    new_size = (int(tree_img.size[0] * ratio), int(tree_img.size[1] * ratio))
+                    tree_img = tree_img.resize(new_size, Image.LANCZOS)
+
+                # RGBA確保
+                if tree_img.mode != 'RGBA':
+                    tree_img = tree_img.convert('RGBA')
+
+                # アルファチェック
+                alpha = tree_img.split()[3]
+                print(f"[PDF] Tree alpha range: {alpha.getextrema()}")
+
+                tree_path = os.path.join(temp_dir, 'tree.png')
+                tree_img.save(tree_path, 'PNG')
+
+                # 描画位置
+                tree_w, tree_h = tree_img.size
+                base_size = min(PAGE_SIZE) * 0.3 * tree_size_pct
+                draw_w = base_size
+                draw_h = base_size * (tree_h / tree_w)
+                x = PAGE_SIZE[0] * tree_x_pct - draw_w / 2
+                y = PAGE_SIZE[1] * (1 - tree_y_pct) - draw_h / 2
+
+                # mask='auto' でPNG透明度を自動適用
+                c.drawImage(tree_path, x, y, width=draw_w, height=draw_h, mask='auto')
+                print(f"[PDF] Tree added at ({x:.0f}, {y:.0f}) with mask='auto'")
+        except Exception as e:
+            print(f"[WARN] Tree error: {e}")
+            import traceback
+            traceback.print_exc()
+
+    c.showPage()
+
+    # ========== 3-6ページ目: cutout画像 ==========
+    cutout_labels = [
+        ('product', 'Front Clear'),
+        ('product_back', 'Back Clear'),
+        ('noclear', 'Front No-Clear'),
+        ('noclear_back', 'Back No-Clear'),
+    ]
+
+    for key, label in cutout_labels:
+        try:
+            response = requests.get(cutout_urls[key], timeout=30)
+            if response.status_code == 200:
+                img = Image.open(BytesIO(response.content))
+                if img.mode != 'RGBA':
+                    img = img.convert('RGBA')
+
+                max_size = 800
+                if max(img.size) > max_size:
+                    ratio = max_size / max(img.size)
+                    new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                    img = img.resize(new_size, Image.LANCZOS)
+
+                img_path = os.path.join(temp_dir, f'{key}.png')
+                img.save(img_path, 'PNG')
+
+                img_w, img_h = img.size
+                max_draw = PAGE_SIZE[0] * 0.9
+                scale = min(max_draw / img_w, max_draw / img_h)
+                draw_w = img_w * scale
+                draw_h = img_h * scale
+                x = (PAGE_SIZE[0] - draw_w) / 2
+                y = (PAGE_SIZE[1] - draw_h) / 2
+
+                c.drawImage(img_path, x, y, width=draw_w, height=draw_h, mask='auto')
+        except Exception as e:
+            print(f"[WARN] {label} error: {e}")
+            c.setFont("Helvetica", 20)
+            c.drawCentredString(PAGE_SIZE[0]/2, PAGE_SIZE[1]/2, f"No Image: {label}")
+
+        c.showPage()
+
+    c.save()
+    print(f"[Canva] PDF created: {output_path}")
+    return output_path
+
+
 def send_discord_notification(order_data, design, webhook_url):
     """Discord通知送信"""
     if not webhook_url:
@@ -834,8 +1082,8 @@ def process_order(order_id, config):
 
     # 一時ディレクトリ作成
     with tempfile.TemporaryDirectory() as temp_dir:
-        # PowerPoint作成
-        pptx_path = create_pptx(order_data, temp_dir)
+        # PDF作成（透明度対応版）
+        pdf_path = create_pdf(order_data, temp_dir)
 
         # Canvaタイトル
         groom = order_data['sim_data'].get('groomName', '')
@@ -843,9 +1091,9 @@ def process_order(order_id, config):
         canva_title = f"注文{order_id} {order_data['board_name']} No.{order_data['board_number']} {groom}＆{bride} {order_data['wedding_date']}"
 
         # Canvaインポート
-        print(f"[Canva] Importing to Canva...")
+        print(f"[Canva] Importing PDF to Canva...")
         design, new_tokens = import_to_canva(
-            pptx_path, canva_title,
+            pdf_path, canva_title,
             config['canva_access_token'],
             config['canva_refresh_token']
         )
