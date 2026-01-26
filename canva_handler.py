@@ -88,10 +88,16 @@ def get_canva_client_secret():
 CUTOUT_BASE_URL = "https://i-tategu-shop.com/wp-content/themes/i-tategu/assets/images/cutouts"
 TREE_IMAGES_URL = "https://i-tategu-shop.com/wp-content/themes/i-tategu/assets/images"
 
-# スライドサイズ（シミュレーターと同じ4:3アスペクト比）
+# スライドサイズ（1:1正方形、シミュレーター座標を変換）
 SLIDE_WIDTH_PX = 1000
-SLIDE_HEIGHT_PX = 750  # 4:3 ratio (simulator uses 500x375)
+SLIDE_HEIGHT_PX = 1000  # 1:1 ratio
 EMU_PER_PX = 914400 / 96
+
+# シミュレーターは4:3 (500x375)、PPTXは1:1 (1000x1000)
+# Y座標を変換: 4:3コンテンツを1:1の中央に配置
+# 垂直オフセット = (1000 - 750) / 2 = 125px
+SIMULATOR_ASPECT_HEIGHT = 750  # 1000幅での4:3相当の高さ
+Y_OFFSET = (SLIDE_HEIGHT_PX - SIMULATOR_ASPECT_HEIGHT) / 2  # = 125px
 
 # フォントマッピング
 FONT_MAP = {
@@ -158,6 +164,16 @@ BACKGROUND_MAP = {
 
 def px_to_emu(px):
     return int(px * EMU_PER_PX)
+
+
+def sim_y_to_pptx_y(sim_y_pct):
+    """シミュレーターY座標(%)をPPTX Y座標(px)に変換
+
+    シミュレーター: 4:3 (500x375)
+    PPTX: 1:1 (1000x1000)
+    4:3コンテンツを1:1の中央に配置
+    """
+    return Y_OFFSET + (sim_y_pct / 100) * SIMULATOR_ASPECT_HEIGHT
 
 
 def detect_board_shape(cutout_img):
@@ -802,7 +818,8 @@ def create_pptx(order_data, temp_dir):
             base_scale = 0.95
             img_ratio = bg_width / bg_height
             max_width = SLIDE_WIDTH_PX * base_scale
-            max_height = SLIDE_HEIGHT_PX * base_scale
+            # 4:3コンテンツエリア内に収める
+            max_height = SIMULATOR_ASPECT_HEIGHT * base_scale
 
             if bg_width / max_width > bg_height / max_height:
                 base_width = max_width
@@ -813,11 +830,12 @@ def create_pptx(order_data, temp_dir):
 
             draw_width = base_width * board_size_pct
             draw_height = base_height * board_size_pct
-            # boardX, boardY は中心位置（0.5 = 中央）
+            # boardX, boardY は中心位置（0.5 = 中央）- 4:3エリア内で計算
             board_x_pct = sim_data.get('boardX', 0.5)
             board_y_pct = sim_data.get('boardY', 0.5)
             img_x = SLIDE_WIDTH_PX * board_x_pct - draw_width / 2
-            img_y = SLIDE_HEIGHT_PX * board_y_pct - draw_height / 2
+            # Y座標: 4:3→1:1変換（board_y_pctは0-1の範囲）
+            img_y = Y_OFFSET + board_y_pct * SIMULATOR_ASPECT_HEIGHT - draw_height / 2
 
             slide2.shapes.add_picture(
                 cutout_path,
@@ -845,7 +863,7 @@ def create_pptx(order_data, temp_dir):
     title_text = sim_data.get('customTitle', '') if title_key == 'custom' else TITLES.get(title_key, 'Wedding Certificate')
     title_x = SLIDE_WIDTH_PX * (sim_data.get('titleX', 50) / 100)
     title_y_pct = get_adjusted_value('titleY', 22)
-    title_y = SLIDE_HEIGHT_PX * (title_y_pct / 100)
+    title_y = sim_y_to_pptx_y(title_y_pct)  # 4:3→1:1座標変換
     title_size_pct = get_adjusted_value('titleSize', 100)
     title_size = 24 * (title_size_pct / 100) * FONT_SCALE
     title_box = add_text_box(slide2, title_text, title_x, title_y, title_font, title_size, center=True, color_rgb=text_color)
@@ -858,7 +876,7 @@ def create_pptx(order_data, temp_dir):
     body_text = sim_data.get('customText', '') if template_key == 'custom' else TEMPLATES.get(template_key, '')
     body_x = SLIDE_WIDTH_PX * (sim_data.get('bodyX', 50) / 100)
     body_y_pct = get_adjusted_value('bodyY', 32)
-    body_y_base = SLIDE_HEIGHT_PX * (body_y_pct / 100)
+    body_y_base = sim_y_to_pptx_y(body_y_pct)  # 4:3→1:1座標変換
     # タイトルと本文が重ならないように最小間隔を確保
     min_gap = 30 * FONT_SCALE  # 最小間隔（スケール適用）
     body_y = max(body_y_base, title_bottom + min_gap)
@@ -875,7 +893,7 @@ def create_pptx(order_data, temp_dir):
     formatted_date = sim_data.get('customDate', '') if date_format_key == 'custom' else format_date(order_data['wedding_date'], date_format_key)
     date_x = SLIDE_WIDTH_PX * (sim_data.get('dateX', 50) / 100)
     date_y_pct = get_adjusted_value('dateY', 60)
-    date_y = SLIDE_HEIGHT_PX * (date_y_pct / 100)
+    date_y = sim_y_to_pptx_y(date_y_pct)  # 4:3→1:1座標変換
     date_size_pct = get_adjusted_value('dateSize', 85)
     date_size = 18 * (date_size_pct / 100) * FONT_SCALE
     if formatted_date:
@@ -888,7 +906,7 @@ def create_pptx(order_data, temp_dir):
     name_size_pct = get_adjusted_value('nameSize', 90)
     name_size = 32 * (name_size_pct / 100) * FONT_SCALE
     name_center_x = SLIDE_WIDTH_PX * name_x_pct
-    name_y = SLIDE_HEIGHT_PX * (name_y_pct / 100)
+    name_y = sim_y_to_pptx_y(name_y_pct)  # 4:3→1:1座標変換
 
     groom_width_approx = len(groom) * name_size * 0.6
     amp_width_approx = name_size * 2
@@ -961,7 +979,8 @@ def create_pptx(order_data, temp_dir):
                 draw_tree_width = TREE_ORIGINAL_SIZE * tree_size_pct * TREE_SCALE_FACTOR * (SLIDE_WIDTH_PX / SIMULATOR_WIDTH)
                 draw_tree_height = draw_tree_width * (tree_height / tree_width)
                 tree_x = SLIDE_WIDTH_PX * tree_x_pct - draw_tree_width / 2
-                tree_y = SLIDE_HEIGHT_PX * tree_y_pct - draw_tree_height / 2
+                # Y座標: 4:3→1:1変換（tree_y_pctは0-1の範囲）
+                tree_y = Y_OFFSET + tree_y_pct * SIMULATOR_ASPECT_HEIGHT - draw_tree_height / 2
                 print(f"[TREE] Size: {draw_tree_width:.0f}x{draw_tree_height:.0f}px at ({tree_x:.0f}, {tree_y:.0f})")
 
                 # BytesIOから直接追加
