@@ -1021,9 +1021,8 @@ def create_pdf(order_data, temp_dir):
                 tree_img.save(tree_path, 'PNG')
 
                 # ===== 板サイズ基準のツリーサイズ計算 =====
-                # 視覚的調整: 1ページ目（PPTX）と同じサイズになるよう係数を調整
-                # 0.35=小さすぎ, 1.2=大きすぎ → 0.7で試す
-                tree_base_ratio = 0.7  # 視覚的に合わせた係数
+                # 視覚的調整: 0.35=小, 0.7=中, 1.0=適正, 1.2=大
+                tree_base_ratio = 1.0  # 視覚的に確認済み
                 draw_w = actual_board_w * tree_size_pct * tree_base_ratio
 
                 # アスペクト比を維持
