@@ -1021,9 +1021,9 @@ def create_pdf(order_data, temp_dir):
                 tree_img.save(tree_path, 'PNG')
 
                 # ===== 板サイズ基準のツリーサイズ計算 =====
-                # シミュレーターでは treeSize=80 で板の約25-30%の幅になる
-                # 板幅の35%をベースに、treeSizeで調整
-                tree_base_ratio = 0.35  # treeSize=100%時に板幅の35%
+                # 視覚的調整: 1ページ目（PPTX）と同じサイズになるよう係数を調整
+                # treeSize=80で板幅の約25-30%を目指す
+                tree_base_ratio = 1.2  # 視覚的に合わせた係数
                 draw_w = actual_board_w * tree_size_pct * tree_base_ratio
 
                 # アスペクト比を維持
