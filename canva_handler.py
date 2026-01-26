@@ -802,23 +802,23 @@ def create_pdf(order_data, temp_dir):
                 img_data = base64.b64decode(sim_image)
                 img = Image.open(BytesIO(img_data))
 
-            # リサイズ
-            max_size = 700
-            if max(img.size) > max_size:
-                ratio = max_size / max(img.size)
-                new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
-                img = img.resize(new_size, Image.LANCZOS)
-
             # 一時保存
             sim_path = os.path.join(temp_dir, 'sim_image.png')
             img.save(sim_path, 'PNG')
 
-            # 描画位置計算（PDFは左下原点）
+            # PPTXと同じロジックで大きく配置
             img_width, img_height = img.size
-            x = (PAGE_SIZE[0] - img_width) / 2
-            y = PAGE_SIZE[1] - img_height - 50  # 上から50px下
+            available_height = PAGE_SIZE[1] * 0.80  # 80%の高さを使用
+            available_width = PAGE_SIZE[0] * 0.95   # 95%の幅を使用
+            scale = min(available_width / img_width, available_height / img_height)
+            draw_width = img_width * scale
+            draw_height = img_height * scale
 
-            c.drawImage(sim_path, x, y, width=img_width, height=img_height)
+            # 中央上寄せ配置（PDFは左下原点）
+            x = (PAGE_SIZE[0] - draw_width) / 2
+            y = PAGE_SIZE[1] - draw_height - 20  # 上から20px下
+
+            c.drawImage(sim_path, x, y, width=draw_width, height=draw_height)
         except Exception as e:
             print(f"[WARN] Sim image error: {e}")
 
