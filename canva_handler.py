@@ -1121,8 +1121,8 @@ def create_pdf(order_data, temp_dir):
     return output_path
 
 
-def send_discord_notification(order_data, design, webhook_url):
-    """Discord通知送信"""
+def send_discord_notification(order_data, design, webhook_url, order=None):
+    """Discord通知送信（新規注文 + Canvaリンク統合版）"""
     if not webhook_url:
         return False
 
@@ -1130,17 +1130,43 @@ def send_discord_notification(order_data, design, webhook_url):
     groom = order_data['sim_data'].get('groomName', '')
     bride = order_data['sim_data'].get('brideName', '')
 
+    # 注文情報を取得（orderオブジェクトがある場合）
+    customer_name = ""
+    order_total = ""
+    payment_method = ""
+    customer_phone = ""
+    customer_email = ""
+
+    if order:
+        billing = order.get('billing', {})
+        customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
+        order_total = order.get('total', '0')
+        payment_method = order.get('payment_method_title', '')
+        customer_phone = billing.get('phone', '')
+        customer_email = billing.get('email', '')
+
     embed = {
-        "title": f"Canvaデザイン準備完了 #{order_data['order_id']}",
-        "color": 5814783,
+        "title": f"🛒 新規注文 #{order_data['order_id']}",
+        "color": 0x06C755,  # LINE緑
         "fields": [
-            {"name": "商品", "value": f"{order_data['board_name']} No.{order_data['board_number']}", "inline": True},
-            {"name": "お客様", "value": f"{groom} & {bride}", "inline": True},
-            {"name": "日付", "value": order_data['wedding_date'], "inline": True},
-            {"name": "Canva編集", "value": f"[デザインを編集する]({edit_url})"},
+            {"name": "👤 お客様", "value": customer_name or f"{groom} & {bride}", "inline": True},
+            {"name": "💰 金額", "value": f"¥{int(float(order_total)):,}" if order_total else "N/A", "inline": True},
+            {"name": "💳 支払方法", "value": payment_method or "N/A", "inline": True},
+            {"name": "📦 商品", "value": f"{order_data['board_name']} No.{order_data['board_number']}", "inline": False},
+            {"name": "📅 挙式日", "value": order_data['wedding_date'], "inline": False},
+            {"name": "📞 連絡先", "value": f"TEL: {customer_phone}\nEmail: {customer_email}" if customer_phone else "N/A", "inline": False},
+            {"name": "🎨 Canva", "value": f"[デザインを編集する]({edit_url})", "inline": False},
         ],
-        "footer": {"text": "i.tategu Canva自動化（Railway）"},
+        "footer": {"text": "i.tategu 自動化システム（Railway）"},
     }
+
+    # 商品画像があればサムネイルに設定
+    if order:
+        for item in order.get('line_items', []):
+            image_url = item.get('image', {}).get('src', '')
+            if image_url:
+                embed['thumbnail'] = {'url': image_url}
+                break
 
     response = requests.post(
         webhook_url,
@@ -1294,9 +1320,9 @@ def process_order(order_id, config):
             design_id = design.get('id')
             print(f"[Canva] Design ID: {design_id}")
 
-            # Discord通知
+            # Discord通知（注文情報+Canvaリンク統合版）
             print(f"[Canva] Sending Discord notification...")
-            send_discord_notification(order_data, design, config['discord_webhook'])
+            send_discord_notification(order_data, design, config['discord_webhook'], order)
             print(f"[Canva] Discord notification sent")
 
             # 処理済みマーク（ここでロックも解除される）

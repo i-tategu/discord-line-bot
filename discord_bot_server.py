@@ -663,7 +663,14 @@ def woo_webhook():
     if not order_id:
         return jsonify({"error": "No order_id"}), 400
 
-    print(f"[Webhook] Received order #{order_id} from {webhook_source}")
+    # 注文ステータスをチェック（支払い完了後のみ処理）
+    order_status = data.get("status", "")
+    print(f"[Webhook] Received order #{order_id} (status: {order_status}) from {webhook_source}")
+
+    # processing（支払い確認済み）またはcompleted のみ処理
+    if order_status not in ["processing", "completed"]:
+        print(f"[Webhook] Skipping order #{order_id} - status '{order_status}' not ready")
+        return jsonify({"status": "skipped", "reason": f"Order status '{order_status}' not ready"})
 
     # 必要な設定が揃っているか確認
     if not all([get_canva_access_token(), get_canva_refresh_token(), get_wc_url(), get_wc_consumer_key(), get_wc_consumer_secret()]):
