@@ -667,9 +667,9 @@ def woo_webhook():
     order_status = data.get("status", "")
     print(f"[Webhook] Received order #{order_id} (status: {order_status}) from {webhook_source}")
 
-    # processing（支払い確認済み）またはcompleted のみ処理
-    if order_status not in ["processing", "completed"]:
-        print(f"[Webhook] Skipping order #{order_id} - status '{order_status}' not ready")
+    # designing（デザイン打ち合わせ中 = 支払い確認後）のみ処理
+    if order_status != "designing":
+        print(f"[Webhook] Skipping order #{order_id} - status '{order_status}' not ready for Canva")
         return jsonify({"status": "skipped", "reason": f"Order status '{order_status}' not ready"})
 
     # 必要な設定が揃っているか確認
