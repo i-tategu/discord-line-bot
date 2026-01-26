@@ -624,21 +624,26 @@ def create_pptx(order_data, temp_dir):
         except Exception as e:
             print(f"[WARN] Background image error: {e}")
 
-    # タイトル
+    # タイトル（独立したテキストボックス）
     title_font = get_element_font('title')
     title_key = sim_data.get('title', 'wedding')
     title_text = sim_data.get('customTitle', '') if title_key == 'custom' else TITLES.get(title_key, 'Wedding Certificate')
     title_x = SLIDE_WIDTH_PX * (sim_data.get('titleX', 50) / 100)
     title_y = SLIDE_HEIGHT_PX * (sim_data.get('titleY', 22) / 100)
     title_size = 24 * (sim_data.get('titleSize', 100) / 100) * FONT_SCALE
-    add_text_box(slide2, title_text, title_x, title_y, title_font, title_size, center=True, color_rgb=text_color)
+    title_box = add_text_box(slide2, title_text, title_x, title_y, title_font, title_size, center=True, color_rgb=text_color)
+    # タイトルボックスの下端を計算
+    title_bottom = title_y + title_size
 
-    # 本文
+    # 本文（独立したテキストボックス - タイトルと重ならないように配置）
     body_font = get_element_font('body')
     template_key = sim_data.get('template', 'holy')
     body_text = sim_data.get('customText', '') if template_key == 'custom' else TEMPLATES.get(template_key, '')
     body_x = SLIDE_WIDTH_PX * (sim_data.get('bodyX', 50) / 100)
-    body_y = SLIDE_HEIGHT_PX * (sim_data.get('bodyY', 32) / 100)
+    body_y_base = SLIDE_HEIGHT_PX * (sim_data.get('bodyY', 32) / 100)
+    # タイトルと本文が重ならないように最小間隔を確保
+    min_gap = 30  # 最小30pxの間隔
+    body_y = max(body_y_base, title_bottom + min_gap)
     body_size = 11 * (sim_data.get('bodySize', 115) / 100) * FONT_SCALE
     body_line_height = sim_data.get('bodyLineHeight', 1.4)
     if body_text:
