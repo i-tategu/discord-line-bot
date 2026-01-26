@@ -935,9 +935,29 @@ def create_pdf(order_data, temp_dir):
     c.setFont("Helvetica", 11)
     c.drawCentredString(PAGE_SIZE[0]/2, info_y - 25, f"Groom: {groom}  Bride: {bride}")
     c.drawCentredString(PAGE_SIZE[0]/2, info_y - 50, f"Date: {order_data['wedding_date']}")
-    # フォント表示名（シミュレーターと同じ「〜風」表記を使用）
+
+    # フォント詳細表示（個別フォント設定がある場合）
     font_display_name = FONT_DISPLAY_MAP.get(base_font, base_font)
-    c.drawCentredString(PAGE_SIZE[0]/2, info_y - 75, f"Font: {font_display_name}")
+    font_differences = []
+    title_font_pdf = sim_data.get('titleFont')
+    body_font_pdf = sim_data.get('bodyFont')
+    date_font_pdf = sim_data.get('dateFont')
+    name_font_pdf = sim_data.get('nameFont')
+
+    if title_font_pdf and title_font_pdf != base_font:
+        font_differences.append(f"Title:{title_font_pdf}")
+    if body_font_pdf and body_font_pdf != base_font:
+        font_differences.append(f"Body:{body_font_pdf}")
+    if date_font_pdf and date_font_pdf != base_font:
+        font_differences.append(f"Date:{date_font_pdf}")
+    if name_font_pdf and name_font_pdf != base_font:
+        font_differences.append(f"Name:{name_font_pdf}")
+
+    if font_differences:
+        font_detail = f"Font: {font_display_name} ({' / '.join(font_differences)})"
+    else:
+        font_detail = f"Font: {font_display_name}"
+    c.drawCentredString(PAGE_SIZE[0]/2, info_y - 75, font_detail)
 
     c.showPage()
 
