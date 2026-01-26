@@ -161,7 +161,7 @@ async def create_status_embed():
         if status == CustomerStatus.SHIPPED:
             continue
 
-        data = summary[status]
+        data = summary[status.value]  # summaryはstatus.valueをキーとして使用
         config = STATUS_CONFIG[status]
 
         embed = discord.Embed(
@@ -188,7 +188,7 @@ async def create_status_embed():
 
         embeds.append(embed)
 
-    shipped_data = summary[CustomerStatus.SHIPPED]
+    shipped_data = summary[CustomerStatus.SHIPPED.value]  # summaryはstatus.valueをキーとして使用
     shipped_config = STATUS_CONFIG[CustomerStatus.SHIPPED]
     shipped_embed = discord.Embed(
         title=f"{shipped_config['emoji']} {shipped_config['label']} ({shipped_data['count']}件)",
