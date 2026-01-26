@@ -732,7 +732,7 @@ def api_canva_debug_process():
 
     # Step 3: Check if already processed
     meta = {m['key']: m['value'] for m in order.get('meta_data', [])}
-    if meta.get('_canva_automation_done'):
+    if meta.get('canva_automation_done'):
         debug["steps"].append({"step": "check_processed", "already_done": True})
         return jsonify(debug)
     debug["steps"].append({"step": "check_processed", "already_done": False})

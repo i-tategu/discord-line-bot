@@ -1099,8 +1099,8 @@ def mark_order_processed(order_id, design_url, wc_url, wc_key, wc_secret):
 
     data = {
         "meta_data": [
-            {"key": "_canva_automation_done", "value": "1"},
-            {"key": "_canva_design_url", "value": design_url},
+            {"key": "canva_automation_done", "value": "1"},
+            {"key": "canva_design_url", "value": design_url},
         ]
     }
 
@@ -1142,7 +1142,7 @@ def process_order(order_id, config):
 
     # 既に処理済みかチェック
     meta = {m['key']: m['value'] for m in order.get('meta_data', [])}
-    if meta.get('_canva_automation_done'):
+    if meta.get('canva_automation_done'):
         print(f"[SKIP] Already processed: {order_id}")
         return False
 
