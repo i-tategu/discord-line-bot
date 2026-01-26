@@ -29,6 +29,45 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
+# トークン永続化ファイルパス（Railway volumeまたはローカル）
+TOKEN_FILE_PATH = os.getenv("TOKEN_FILE_PATH", "/tmp/canva_tokens.json")
+
+def save_tokens_to_file(access_token, refresh_token):
+    """トークンをファイルに保存（再起動後も維持）"""
+    try:
+        tokens = {
+            'access_token': access_token,
+            'refresh_token': refresh_token,
+            'updated_at': datetime.now().isoformat()
+        }
+        with open(TOKEN_FILE_PATH, 'w') as f:
+            json.dump(tokens, f)
+        print(f"[Token] Saved to {TOKEN_FILE_PATH}")
+        return True
+    except Exception as e:
+        print(f"[Token] Failed to save: {e}")
+        return False
+
+def load_tokens_from_file():
+    """ファイルからトークンを読み込み（環境変数より優先）"""
+    try:
+        if os.path.exists(TOKEN_FILE_PATH):
+            with open(TOKEN_FILE_PATH, 'r') as f:
+                tokens = json.load(f)
+            print(f"[Token] Loaded from file (updated: {tokens.get('updated_at', 'unknown')})")
+            return tokens.get('access_token'), tokens.get('refresh_token')
+    except Exception as e:
+        print(f"[Token] Failed to load from file: {e}")
+    return None, None
+
+def get_current_tokens():
+    """現在有効なトークンを取得（ファイル優先、なければ環境変数）"""
+    file_access, file_refresh = load_tokens_from_file()
+    if file_access and file_refresh:
+        return file_access, file_refresh
+    # ファイルになければ環境変数から
+    return os.getenv("CANVA_ACCESS_TOKEN", ""), os.getenv("CANVA_REFRESH_TOKEN", "")
+
 # 設定（環境変数から取得 - 遅延読み込み）
 def get_canva_client_id():
     return os.getenv("CANVA_CLIENT_ID", "OC-AZvUVtxGhbOD")
@@ -322,10 +361,14 @@ def refresh_canva_token(refresh_token):
         new_access = tokens.get('access_token')
         new_refresh = tokens.get('refresh_token', refresh_token)
 
-        # 環境変数を更新（プロセス内で永続化）
+        # 環境変数を更新（プロセス内）
         os.environ['CANVA_ACCESS_TOKEN'] = new_access
         os.environ['CANVA_REFRESH_TOKEN'] = new_refresh
-        print(f"[Canva Token] Refresh successful! Tokens updated in memory.")
+
+        # ファイルにも保存（再起動後も維持）
+        save_tokens_to_file(new_access, new_refresh)
+
+        print(f"[Canva Token] Refresh successful! Tokens updated in memory and file.")
         print(f"[Canva Token] New refresh token (first 50 chars): {new_refresh[:50]}...")
 
         return {

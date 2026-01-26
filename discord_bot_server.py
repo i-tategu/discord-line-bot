@@ -29,11 +29,13 @@ from customer_manager import (
 
 # Canva自動化ハンドラー
 try:
-    from canva_handler import process_order as canva_process_order
+    from canva_handler import process_order as canva_process_order, get_current_tokens
     CANVA_ENABLED = True
 except ImportError as e:
     CANVA_ENABLED = False
     print(f"[WARN] Canva handler not available: {e}")
+    def get_current_tokens():
+        return os.environ.get("CANVA_ACCESS_TOKEN"), os.environ.get("CANVA_REFRESH_TOKEN")
 
 load_dotenv()
 
@@ -64,10 +66,12 @@ def get_forum_line():
     return os.environ.get("DISCORD_FORUM_LINE", "1463460598493745225")
 
 def get_canva_access_token():
-    return os.environ.get("CANVA_ACCESS_TOKEN")
+    access, _ = get_current_tokens()
+    return access or os.environ.get("CANVA_ACCESS_TOKEN")
 
 def get_canva_refresh_token():
-    return os.environ.get("CANVA_REFRESH_TOKEN")
+    _, refresh = get_current_tokens()
+    return refresh or os.environ.get("CANVA_REFRESH_TOKEN")
 
 def get_canva_webhook_url():
     return os.environ.get("DISCORD_WEBHOOK_URL")
@@ -901,7 +905,7 @@ def api_canva_debug_token():
 
 @api.route("/api/canva/update-tokens", methods=["POST"])
 def api_canva_update_tokens():
-    """Canvaトークンを手動で更新"""
+    """Canvaトークンを手動で更新（ファイル永続化）"""
     data = request.json
     access_token = data.get("access_token")
     refresh_token = data.get("refresh_token")
@@ -913,6 +917,15 @@ def api_canva_update_tokens():
     if refresh_token:
         os.environ['CANVA_REFRESH_TOKEN'] = refresh_token
         updated['refresh_token'] = f"Set ({len(refresh_token)} chars)"
+
+    # ファイルにも保存（再起動後も維持）
+    if access_token and refresh_token:
+        try:
+            from canva_handler import save_tokens_to_file
+            save_tokens_to_file(access_token, refresh_token)
+            updated['file_saved'] = True
+        except Exception as e:
+            updated['file_save_error'] = str(e)
 
     return jsonify({"success": True, "updated": updated})
 
@@ -928,6 +941,107 @@ def api_canva_current_tokens():
         "refresh_token_preview": refresh[:50] + "..." if refresh and len(refresh) > 50 else refresh,
         "refresh_token_len": len(refresh) if refresh else 0,
     })
+
+
+# OAuth認証用の状態保持
+_oauth_state = {}
+
+@api.route("/api/canva/oauth/start", methods=["GET"])
+def api_canva_oauth_start():
+    """Canva OAuth認証URLを生成"""
+    import secrets
+    import hashlib
+
+    client_id = os.environ.get("CANVA_CLIENT_ID", "OC-AZvUVtxGhbOD")
+    redirect_uri = "https://i-tategu-shop.com/canva-callback/"
+    scopes = "design:content:read design:content:write design:meta:read design:permission:read design:permission:write asset:read asset:write folder:read folder:write"
+
+    # PKCE生成
+    code_verifier = secrets.token_urlsafe(64)[:128]
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode()).digest()
+    ).decode().rstrip('=')
+
+    # 状態保存（5分間有効）
+    import time
+    _oauth_state['code_verifier'] = code_verifier
+    _oauth_state['expires'] = time.time() + 300
+
+    params = f"response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope={scopes}&code_challenge={code_challenge}&code_challenge_method=S256"
+    auth_url = f"https://www.canva.com/api/oauth/authorize?{params}"
+
+    return jsonify({
+        "auth_url": auth_url,
+        "instructions": "このURLをブラウザで開き、認証後にリダイレクトされたURLの ?code=XXX をコピーして /api/canva/oauth/callback に送信"
+    })
+
+
+@api.route("/api/canva/oauth/callback", methods=["POST"])
+def api_canva_oauth_callback():
+    """OAuth認証コードをトークンに交換"""
+    import time
+
+    data = request.json
+    code = data.get("code")
+
+    if not code:
+        return jsonify({"error": "code required"}), 400
+
+    # 状態確認
+    if not _oauth_state.get('code_verifier') or time.time() > _oauth_state.get('expires', 0):
+        return jsonify({"error": "OAuth session expired. Call /api/canva/oauth/start first"}), 400
+
+    code_verifier = _oauth_state['code_verifier']
+    client_id = os.environ.get("CANVA_CLIENT_ID", "OC-AZvUVtxGhbOD")
+    client_secret = os.environ.get("CANVA_CLIENT_SECRET", "")
+    redirect_uri = "https://i-tategu-shop.com/canva-callback/"
+
+    # トークン交換
+    auth = base64.b64encode(f'{client_id}:{client_secret}'.encode()).decode()
+    response = requests.post(
+        'https://api.canva.com/rest/v1/oauth/token',
+        headers={
+            'Authorization': f'Basic {auth}',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        data={
+            'grant_type': 'authorization_code',
+            'code': code,
+            'code_verifier': code_verifier,
+            'redirect_uri': redirect_uri
+        }
+    )
+
+    if response.status_code != 200:
+        return jsonify({"error": "Token exchange failed", "details": response.text}), 400
+
+    tokens = response.json()
+    access_token = tokens.get('access_token')
+    refresh_token = tokens.get('refresh_token')
+
+    if access_token and refresh_token:
+        # 環境変数更新
+        os.environ['CANVA_ACCESS_TOKEN'] = access_token
+        os.environ['CANVA_REFRESH_TOKEN'] = refresh_token
+
+        # ファイル保存
+        try:
+            from canva_handler import save_tokens_to_file
+            save_tokens_to_file(access_token, refresh_token)
+        except Exception as e:
+            print(f"[WARN] Failed to save tokens to file: {e}")
+
+        # 状態クリア
+        _oauth_state.clear()
+
+        return jsonify({
+            "success": True,
+            "access_token_preview": access_token[:50] + "...",
+            "refresh_token_preview": refresh_token[:50] + "...",
+            "expires_in": tokens.get('expires_in')
+        })
+
+    return jsonify({"error": "No tokens in response", "response": tokens}), 400
 
 
 def run_api():
