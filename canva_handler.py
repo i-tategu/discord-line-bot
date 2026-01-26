@@ -58,12 +58,12 @@ FONT_MAP = {
     'Rouge Script': 'Rouge Script',
 }
 
-# フォント表示名マッピング（シミュレーターと同じ「〜風」表記）
+# フォント表示名マッピング（シミュレーターと同じスタイル表記、英語版）
 FONT_DISPLAY_MAP = {
-    'Sacramento': 'Holiday風',
-    'Pinyon Script': 'Eyesome風',
-    'Satisfy': 'Mistrully風',
-    'Rouge Script': 'Amsterdam風',
+    'Sacramento': 'Holiday style',
+    'Pinyon Script': 'Eyesome style',
+    'Satisfy': 'Mistrully style',
+    'Rouge Script': 'Amsterdam style',
 }
 
 # テンプレート
