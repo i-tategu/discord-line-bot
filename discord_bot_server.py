@@ -22,7 +22,7 @@ from discord import app_commands
 
 from customer_manager import (
     CustomerStatus, STATUS_CONFIG,
-    add_customer, update_customer_status, get_customer,
+    add_customer, add_order_customer, update_customer_status, get_customer,
     get_customer_by_channel, get_customer_by_order,
     get_status_summary, get_all_customers_grouped, load_customers
 )
@@ -670,6 +670,24 @@ def woo_webhook():
     # 注文ステータスをチェック（支払い完了後のみ処理）
     order_status = data.get("status", "")
     print(f"[Webhook] Received order #{order_id} (status: {order_status}) from {webhook_source}")
+
+    # 顧客一覧に追加（全ステータスで追加、重複は自動スキップ）
+    try:
+        billing = data.get("billing", {})
+        customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}".strip()
+        email = billing.get("email", "")
+        order_info = {
+            "total": data.get("total", ""),
+            "status": order_status,
+            "product": data.get("line_items", [{}])[0].get("name", "") if data.get("line_items") else "",
+        }
+        add_order_customer(order_id, customer_name, email, order_info)
+        print(f"[Webhook] Customer added/updated: {customer_name} ({email})")
+        # 顧客一覧を更新
+        if bot.loop:
+            asyncio.run_coroutine_threadsafe(update_overview_channel(), bot.loop)
+    except Exception as e:
+        print(f"[WARN] Failed to add customer: {e}")
 
     # designing（デザイン打ち合わせ中 = 支払い確認後）のみ処理
     if order_status != "designing":

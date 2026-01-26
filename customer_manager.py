@@ -84,6 +84,70 @@ def add_customer(line_user_id, display_name, discord_channel_id, order_id=None, 
     return customers[line_user_id]
 
 
+def add_order_customer(order_id, customer_name, email, order_info=None):
+    """WooCommerce注文から顧客追加（LINE未連携）"""
+    customers = load_customers()
+
+    # emailをキーとして使用（LINE連携前の仮ID）
+    customer_key = f"wc_{email}" if email else f"order_{order_id}"
+
+    # 既存顧客を確認（同じメールアドレス）
+    existing_key = None
+    for key, data in customers.items():
+        if data.get("email") == email and email:
+            existing_key = key
+            break
+
+    if existing_key:
+        customer_key = existing_key
+    elif customer_key not in customers:
+        customers[customer_key] = {
+            "display_name": customer_name,
+            "email": email,
+            "discord_channel_id": None,  # LINE連携時に設定
+            "line_user_id": None,  # LINE連携時に設定
+            "status": CustomerStatus.PURCHASED.value,
+            "orders": [],
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+        }
+
+    # 注文追加（重複チェック）
+    order_exists = any(
+        str(o["order_id"]) == str(order_id)
+        for o in customers[customer_key].get("orders", [])
+    )
+    if not order_exists:
+        order_data = {
+            "order_id": order_id,
+            "status": CustomerStatus.PURCHASED.value,
+            "info": order_info or {},
+            "created_at": datetime.now().isoformat(),
+        }
+        customers[customer_key]["orders"].append(order_data)
+        customers[customer_key]["updated_at"] = datetime.now().isoformat()
+
+    save_customers(customers)
+    return customers[customer_key]
+
+
+def link_line_to_customer(email, line_user_id, discord_channel_id):
+    """LINE連携: emailでWooCommerce顧客を検索してLINEアカウントを紐付け"""
+    customers = load_customers()
+
+    # emailで既存顧客を検索
+    for key, data in customers.items():
+        if data.get("email") == email:
+            # LINE情報を更新
+            data["line_user_id"] = line_user_id
+            data["discord_channel_id"] = discord_channel_id
+            data["updated_at"] = datetime.now().isoformat()
+            save_customers(customers)
+            return key, data
+
+    return None, None
+
+
 def update_customer_status(line_user_id, new_status: CustomerStatus, order_id=None):
     """顧客ステータス更新"""
     customers = load_customers()
