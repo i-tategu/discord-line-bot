@@ -1148,6 +1148,7 @@ def mark_order_processed(order_id, design_url, wc_url, wc_key, wc_secret):
         "status": "designing",  # デザイン打ち合わせ中 (short slug for WP 20-char limit)
         "meta_data": [
             {"key": "canva_automation_done", "value": "1"},
+            {"key": "canva_processing", "value": ""},  # ロック解除
             {"key": "canva_design_url", "value": design_url},
         ]
     }
@@ -1188,11 +1189,19 @@ def process_order(order_id, config):
         print(f"[ERROR] Order not found: {order_id}")
         return False
 
-    # 既に処理済みかチェック
+    # 既に処理済み or 処理中かチェック
     meta = {m['key']: m['value'] for m in order.get('meta_data', [])}
-    if meta.get('canva_automation_done'):
-        print(f"[SKIP] Already processed: {order_id}")
+    if meta.get('canva_automation_done') or meta.get('canva_processing'):
+        print(f"[SKIP] Already processed or in progress: {order_id}")
         return False
+
+    # 即座に処理中フラグを立てる（重複防止ロック）
+    lock_url = f"{config['wc_url']}/wp-json/wc/v3/orders/{order_id}?consumer_key={config['wc_key']}&consumer_secret={config['wc_secret']}"
+    try:
+        requests.put(lock_url, json={"meta_data": [{"key": "canva_processing", "value": "1"}]})
+        print(f"[Canva] Lock acquired for order #{order_id}")
+    except Exception as e:
+        print(f"[WARN] Lock failed: {e}")
 
     # 注文データ解析
     order_data = parse_order_data(order)
