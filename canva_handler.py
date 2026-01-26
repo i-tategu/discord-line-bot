@@ -1139,6 +1139,41 @@ def send_discord_notification(order_data, design, webhook_url):
     return response.status_code == 204
 
 
+def clear_processing_lock(order_id, wc_url, wc_key, wc_secret):
+    """処理中ロックを解除（失敗時用）"""
+    url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}?consumer_key={wc_key}&consumer_secret={wc_secret}"
+    try:
+        requests.put(url, json={"meta_data": [{"key": "canva_processing", "value": ""}]})
+        print(f"[Canva] Lock released for order #{order_id}")
+    except Exception as e:
+        print(f"[WARN] Failed to release lock: {e}")
+
+
+def send_discord_error_notification(order_id, error_message, webhook_url):
+    """Discord エラー通知送信"""
+    if not webhook_url:
+        return False
+
+    embed = {
+        "title": f"⚠️ Canva処理エラー #{order_id}",
+        "color": 15158332,  # 赤色
+        "fields": [
+            {"name": "エラー内容", "value": str(error_message)[:500]},
+        ],
+        "footer": {"text": "i.tategu Canva自動化（Railway）"},
+    }
+
+    try:
+        response = requests.post(
+            webhook_url,
+            json={"embeds": [embed]},
+            headers={"Content-Type": "application/json"}
+        )
+        return response.status_code == 204
+    except:
+        return False
+
+
 def mark_order_processed(order_id, design_url, wc_url, wc_key, wc_secret):
     """注文を処理済みにマーク + ステータスを「デザイン打ち合わせ中」に変更"""
     # WooCommerce REST APIはクエリパラメータで認証
@@ -1196,57 +1231,81 @@ def process_order(order_id, config):
         return False
 
     # 即座に処理中フラグを立てる（重複防止ロック）
-    lock_url = f"{config['wc_url']}/wp-json/wc/v3/orders/{order_id}?consumer_key={config['wc_key']}&consumer_secret={config['wc_secret']}"
+    lock_acquired = False
     try:
+        lock_url = f"{config['wc_url']}/wp-json/wc/v3/orders/{order_id}?consumer_key={config['wc_key']}&consumer_secret={config['wc_secret']}"
         requests.put(lock_url, json={"meta_data": [{"key": "canva_processing", "value": "1"}]})
+        lock_acquired = True
         print(f"[Canva] Lock acquired for order #{order_id}")
     except Exception as e:
         print(f"[WARN] Lock failed: {e}")
 
-    # 注文データ解析
-    order_data = parse_order_data(order)
+    # ロック取得後の処理（失敗時は必ずロック解除）
+    success = False
+    error_message = None
 
-    if not order_data['board_name']:
-        print(f"[SKIP] No board info: {order_id}")
-        return False
+    try:
+        # 注文データ解析
+        order_data = parse_order_data(order)
 
-    print(f"[Canva] Product: {order_data['board_name']} No.{order_data['board_number']}")
-    print(f"[Canva] Names: {order_data['sim_data'].get('groomName', '')} & {order_data['sim_data'].get('brideName', '')}")
-
-    # 一時ディレクトリ作成
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # PDF作成（透明度対応版）
-        pdf_path = create_pdf(order_data, temp_dir)
-
-        # Canvaタイトル
-        groom = order_data['sim_data'].get('groomName', '')
-        bride = order_data['sim_data'].get('brideName', '')
-        canva_title = f"注文{order_id} {order_data['board_name']} No.{order_data['board_number']} {groom}＆{bride} {order_data['wedding_date']}"
-
-        # Canvaインポート
-        print(f"[Canva] Importing PDF to Canva...")
-        design, new_tokens = import_to_canva(
-            pdf_path, canva_title,
-            config['canva_access_token'],
-            config['canva_refresh_token']
-        )
-
-        if not design:
-            print(f"[ERROR] Canva import failed")
+        if not order_data['board_name']:
+            error_message = "No board info"
+            print(f"[SKIP] No board info: {order_id}")
             return False
 
-        design_id = design.get('id')
-        print(f"[Canva] Design ID: {design_id}")
+        print(f"[Canva] Product: {order_data['board_name']} No.{order_data['board_number']}")
+        print(f"[Canva] Names: {order_data['sim_data'].get('groomName', '')} & {order_data['sim_data'].get('brideName', '')}")
 
-        # Discord通知
-        print(f"[Canva] Sending Discord notification...")
-        send_discord_notification(order_data, design, config['discord_webhook'])
-        print(f"[Canva] Discord notification sent")
+        # 一時ディレクトリ作成
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # PDF作成（透明度対応版）
+            pdf_path = create_pdf(order_data, temp_dir)
 
-        # 処理済みマーク
-        design_url = design.get('urls', {}).get('edit_url', '')
-        mark_order_processed(order_id, design_url, config['wc_url'], config['wc_key'], config['wc_secret'])
-        print(f"[Canva] Order marked as processed")
+            # Canvaタイトル
+            groom = order_data['sim_data'].get('groomName', '')
+            bride = order_data['sim_data'].get('brideName', '')
+            canva_title = f"注文{order_id} {order_data['board_name']} No.{order_data['board_number']} {groom}＆{bride} {order_data['wedding_date']}"
 
-    print(f"[Canva] Order #{order_id} completed!")
-    return True
+            # Canvaインポート
+            print(f"[Canva] Importing PDF to Canva...")
+            design, error_info = import_to_canva(
+                pdf_path, canva_title,
+                config['canva_access_token'],
+                config['canva_refresh_token']
+            )
+
+            if not design:
+                error_message = f"Canva import failed: {error_info}"
+                print(f"[ERROR] {error_message}")
+                return False
+
+            design_id = design.get('id')
+            print(f"[Canva] Design ID: {design_id}")
+
+            # Discord通知
+            print(f"[Canva] Sending Discord notification...")
+            send_discord_notification(order_data, design, config['discord_webhook'])
+            print(f"[Canva] Discord notification sent")
+
+            # 処理済みマーク（ここでロックも解除される）
+            design_url = design.get('urls', {}).get('edit_url', '')
+            mark_order_processed(order_id, design_url, config['wc_url'], config['wc_key'], config['wc_secret'])
+            print(f"[Canva] Order marked as processed")
+            success = True
+
+        print(f"[Canva] Order #{order_id} completed!")
+        return True
+
+    except Exception as e:
+        error_message = str(e)
+        print(f"[ERROR] Processing failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+    finally:
+        # 失敗時はロック解除 & エラー通知
+        if lock_acquired and not success:
+            clear_processing_lock(order_id, config['wc_url'], config['wc_key'], config['wc_secret'])
+            if error_message and config.get('discord_webhook'):
+                send_discord_error_notification(order_id, error_message, config['discord_webhook'])
