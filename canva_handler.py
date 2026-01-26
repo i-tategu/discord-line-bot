@@ -177,17 +177,20 @@ def sim_y_to_pptx_y(sim_y_pct):
 
 
 def detect_board_shape(cutout_img):
-    """板の形状を検出（シミュレーターと同じロジック）
+    """板の形状と境界を検出（シミュレーターと同じロジック）
 
     Returns:
         dict: {
             'type': 'portrait' | 'landscape' | 'square',
             'aspectRatio': float,
-            'stretchFactor': float (portrait時のみ有効)
+            'stretchFactor': float (portrait時のみ有効),
+            'bounds': {'minX': 0-1, 'maxX': 0-1, 'minY': 0-1, 'maxY': 0-1}  # 正規化された境界
         }
     """
+    default_bounds = {'minX': 0, 'maxX': 1, 'minY': 0, 'maxY': 1}
+
     if cutout_img is None:
-        return {'type': 'square', 'aspectRatio': 1.0, 'stretchFactor': 0}
+        return {'type': 'square', 'aspectRatio': 1.0, 'stretchFactor': 0, 'bounds': default_bounds}
 
     # 透明部分を除いた実際の板サイズを検出
     if cutout_img.mode != 'RGBA':
@@ -208,7 +211,15 @@ def detect_board_shape(cutout_img):
                 max_y = max(max_y, py)
 
     if max_x <= min_x or max_y <= min_y:
-        return {'type': 'square', 'aspectRatio': 1.0, 'stretchFactor': 0}
+        return {'type': 'square', 'aspectRatio': 1.0, 'stretchFactor': 0, 'bounds': default_bounds}
+
+    # 正規化された境界（0-1の範囲）
+    bounds = {
+        'minX': min_x / img_w,
+        'maxX': max_x / img_w,
+        'minY': min_y / img_h,
+        'maxY': max_y / img_h
+    }
 
     # 実際の板サイズ
     board_w = max_x - min_x
@@ -229,11 +240,13 @@ def detect_board_shape(cutout_img):
         stretch_factor = min((1 / aspect_ratio) - 1, 3)
 
     print(f"[Shape] Detected: {shape_type}, aspectRatio={aspect_ratio:.2f}, stretchFactor={stretch_factor:.2f}")
+    print(f"[Shape] Bounds: X={bounds['minX']:.2f}-{bounds['maxX']:.2f}, Y={bounds['minY']:.2f}-{bounds['maxY']:.2f}")
 
     return {
         'type': shape_type,
         'aspectRatio': aspect_ratio,
-        'stretchFactor': stretch_factor
+        'stretchFactor': stretch_factor,
+        'bounds': bounds
     }
 
 
@@ -796,16 +809,23 @@ def create_pptx(order_data, temp_dir):
     cutout_path = download_image(cutout_urls.get(background, cutout_urls['product']), temp_dir, preserve_transparency=True)
 
     # 板形状検出（ダウンロード後に実行）
-    board_shape = {'type': 'square', 'aspectRatio': 1.0, 'stretchFactor': 0}
+    board_shape = {'type': 'square', 'aspectRatio': 1.0, 'stretchFactor': 0, 'bounds': {'minX': 0, 'maxX': 1, 'minY': 0, 'maxY': 1}}
     layout_adj = {}  # レイアウト調整値
+
+    # 板の実際の位置とサイズ（テキスト配置用）
+    actual_board_left = 0
+    actual_board_top = 0
+    actual_board_width = SLIDE_WIDTH_PX
+    actual_board_height = SLIDE_HEIGHT_PX
 
     if cutout_path and os.path.exists(cutout_path):
         try:
             bg_img = Image.open(cutout_path)
             bg_width, bg_height = bg_img.size
 
-            # 板形状検出
+            # 板形状検出（境界情報を含む）
             board_shape = detect_board_shape(bg_img)
+            bounds = board_shape.get('bounds', {'minX': 0, 'maxX': 1, 'minY': 0, 'maxY': 1})
 
             # 形状に応じたレイアウト調整を取得
             if board_shape['type'] == 'portrait':
@@ -837,6 +857,15 @@ def create_pptx(order_data, temp_dir):
             # Y座標: 4:3→1:1変換（board_y_pctは0-1の範囲）
             img_y = Y_OFFSET + board_y_pct * SIMULATOR_ASPECT_HEIGHT - draw_height / 2
 
+            # 板の実際の位置とサイズを計算（透過部分を除く）
+            actual_board_left = img_x + draw_width * bounds['minX']
+            actual_board_top = img_y + draw_height * bounds['minY']
+            actual_board_width = draw_width * (bounds['maxX'] - bounds['minX'])
+            actual_board_height = draw_height * (bounds['maxY'] - bounds['minY'])
+
+            print(f"[Board] Image: ({img_x:.0f}, {img_y:.0f}) {draw_width:.0f}x{draw_height:.0f}")
+            print(f"[Board] Actual: ({actual_board_left:.0f}, {actual_board_top:.0f}) {actual_board_width:.0f}x{actual_board_height:.0f}")
+
             slide2.shapes.add_picture(
                 cutout_path,
                 px_to_emu(img_x), px_to_emu(img_y),
@@ -857,28 +886,29 @@ def create_pptx(order_data, temp_dir):
             return layout_adj[key]
         return default
 
-    # タイトル（独立したテキストボックス）
+    # ========== テキスト配置（板の実際の境界を基準に） ==========
+    # titleX=50, titleY=22 → 板の左から50%、上から22%の位置
+
+    # タイトル
     title_font = get_element_font('title')
     title_key = sim_data.get('title', 'wedding')
     title_text = sim_data.get('customTitle', '') if title_key == 'custom' else TITLES.get(title_key, 'Wedding Certificate')
-    title_x = SLIDE_WIDTH_PX * (sim_data.get('titleX', 50) / 100)
+    title_x = actual_board_left + actual_board_width * (sim_data.get('titleX', 50) / 100)
     title_y_pct = get_adjusted_value('titleY', 22)
-    title_y = sim_y_to_pptx_y(title_y_pct)  # 4:3→1:1座標変換
+    title_y = actual_board_top + actual_board_height * (title_y_pct / 100)
     title_size_pct = get_adjusted_value('titleSize', 100)
     title_size = 24 * (title_size_pct / 100) * FONT_SCALE
     title_box = add_text_box(slide2, title_text, title_x, title_y, title_font, title_size, center=True, color_rgb=text_color)
-    # タイトルボックスの下端を計算
     title_bottom = title_y + title_size
 
-    # 本文（独立したテキストボックス - タイトルと重ならないように配置）
+    # 本文
     body_font = get_element_font('body')
     template_key = sim_data.get('template', 'holy')
     body_text = sim_data.get('customText', '') if template_key == 'custom' else TEMPLATES.get(template_key, '')
-    body_x = SLIDE_WIDTH_PX * (sim_data.get('bodyX', 50) / 100)
+    body_x = actual_board_left + actual_board_width * (sim_data.get('bodyX', 50) / 100)
     body_y_pct = get_adjusted_value('bodyY', 32)
-    body_y_base = sim_y_to_pptx_y(body_y_pct)  # 4:3→1:1座標変換
-    # タイトルと本文が重ならないように最小間隔を確保
-    min_gap = 30 * FONT_SCALE  # 最小間隔（スケール適用）
+    body_y_base = actual_board_top + actual_board_height * (body_y_pct / 100)
+    min_gap = 30 * FONT_SCALE
     body_y = max(body_y_base, title_bottom + min_gap)
     body_size_pct = get_adjusted_value('bodySize', 115)
     body_size = 11 * (body_size_pct / 100) * FONT_SCALE
@@ -891,9 +921,9 @@ def create_pptx(order_data, temp_dir):
     date_font = get_element_font('date')
     date_format_key = sim_data.get('dateFormat', 'western')
     formatted_date = sim_data.get('customDate', '') if date_format_key == 'custom' else format_date(order_data['wedding_date'], date_format_key)
-    date_x = SLIDE_WIDTH_PX * (sim_data.get('dateX', 50) / 100)
+    date_x = actual_board_left + actual_board_width * (sim_data.get('dateX', 50) / 100)
     date_y_pct = get_adjusted_value('dateY', 60)
-    date_y = sim_y_to_pptx_y(date_y_pct)  # 4:3→1:1座標変換
+    date_y = actual_board_top + actual_board_height * (date_y_pct / 100)
     date_size_pct = get_adjusted_value('dateSize', 85)
     date_size = 18 * (date_size_pct / 100) * FONT_SCALE
     if formatted_date:
@@ -905,8 +935,8 @@ def create_pptx(order_data, temp_dir):
     name_y_pct = get_adjusted_value('nameY', 74)
     name_size_pct = get_adjusted_value('nameSize', 90)
     name_size = 32 * (name_size_pct / 100) * FONT_SCALE
-    name_center_x = SLIDE_WIDTH_PX * name_x_pct
-    name_y = sim_y_to_pptx_y(name_y_pct)  # 4:3→1:1座標変換
+    name_center_x = actual_board_left + actual_board_width * name_x_pct
+    name_y = actual_board_top + actual_board_height * (name_y_pct / 100)
 
     groom_width_approx = len(groom) * name_size * 0.6
     amp_width_approx = name_size * 2
@@ -978,10 +1008,11 @@ def create_pptx(order_data, temp_dir):
                 SIMULATOR_WIDTH = 500      # シミュレーターのキャンバス幅
                 draw_tree_width = TREE_ORIGINAL_SIZE * tree_size_pct * TREE_SCALE_FACTOR * (SLIDE_WIDTH_PX / SIMULATOR_WIDTH)
                 draw_tree_height = draw_tree_width * (tree_height / tree_width)
-                tree_x = SLIDE_WIDTH_PX * tree_x_pct - draw_tree_width / 2
-                # Y座標: 4:3→1:1変換（tree_y_pctは0-1の範囲）
-                tree_y = Y_OFFSET + tree_y_pct * SIMULATOR_ASPECT_HEIGHT - draw_tree_height / 2
-                print(f"[TREE] Size: {draw_tree_width:.0f}x{draw_tree_height:.0f}px at ({tree_x:.0f}, {tree_y:.0f})")
+                # ツリー位置も板基準（テキストと同じロジック）
+                # tree_x_pct, tree_y_pct は板の左上からの相対位置（0-1）
+                tree_x = actual_board_left + actual_board_width * tree_x_pct - draw_tree_width / 2
+                tree_y = actual_board_top + actual_board_height * tree_y_pct - draw_tree_height / 2
+                print(f"[TREE] Size: {draw_tree_width:.0f}x{draw_tree_height:.0f}px at ({tree_x:.0f}, {tree_y:.0f}) (board-relative)")
 
                 # BytesIOから直接追加
                 slide2.shapes.add_picture(
