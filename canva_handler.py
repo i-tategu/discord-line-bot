@@ -1539,6 +1539,8 @@ def send_shipping_notification(order_data, order, bot_token):
     }
 
     # ボタン（B2クラウド用）
+    # 注文番号をURLハッシュに含めてB2クラウドを開く
+    b2_url = f"https://newb2web.kuronekoyamato.co.jp/single_issue_simple_reg.html#order={order_data['order_id']}"
     components = [
         {
             "type": 1,  # Action Row
@@ -1546,14 +1548,8 @@ def send_shipping_notification(order_data, order, bot_token):
                 {
                     "type": 2,  # Button
                     "style": 5,  # Link
-                    "label": "🐱 B2クラウドを開く",
-                    "url": "https://newb2web.kuronekoyamato.co.jp/single_issue_simple_reg.html",
-                },
-                {
-                    "type": 2,  # Button
-                    "style": 1,  # Primary (青)
-                    "label": "📋 B2用コピー",
-                    "custom_id": f"b2_copy_{order_data['order_id']}",
+                    "label": "🐱 B2クラウド + 自動入力",
+                    "url": b2_url,
                 },
                 {
                     "type": 2,  # Button
