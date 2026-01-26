@@ -590,7 +590,9 @@ def create_pptx(order_data, temp_dir):
 
     FONT_SCALE = SLIDE_WIDTH_PX / 500
     board_size_pct = sim_data.get('boardSize', 130) / 100
-    text_color = (42, 24, 16)
+    # テキスト色: 'burn'=茶色, 'white'=白
+    text_color_name = sim_data.get('textColor', 'burn')
+    text_color = (255, 255, 255) if text_color_name == 'white' else (42, 24, 16)
 
     # 背景画像をダウンロード（透明度を保持）
     cutout_path = download_image(cutout_urls.get(background, cutout_urls['product']), temp_dir, preserve_transparency=True)
@@ -811,7 +813,9 @@ def create_pdf(order_data, temp_dir):
     }
 
     base_font = sim_data.get('baseFont', 'Alex Brush')
-    text_color_hex = (42/255, 24/255, 16/255)  # RGB正規化
+    # テキスト色: 'burn'=茶色, 'white'=白
+    text_color_name = sim_data.get('textColor', 'burn')
+    text_color_hex = (1.0, 1.0, 1.0) if text_color_name == 'white' else (42/255, 24/255, 16/255)
 
     # ========== 1ページ目: シミュレーション画像 + 注文情報 ==========
     if sim_image:
