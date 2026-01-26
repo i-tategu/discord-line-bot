@@ -169,7 +169,8 @@ def get_status_summary():
     summary = {}
     for status, customers in grouped.items():
         config = STATUS_CONFIG[status]
-        summary[status] = {
+        # JSONシリアライズのためenumのvalueを使用
+        summary[status.value] = {
             "count": len(customers),
             "customers": customers,
             "label": config["label"],
