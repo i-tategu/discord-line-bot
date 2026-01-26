@@ -29,8 +29,17 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-# トークン永続化ファイルパス（Railway volumeまたはローカル）
-TOKEN_FILE_PATH = os.getenv("TOKEN_FILE_PATH", "/tmp/canva_tokens.json")
+# トークン永続化ファイルパス（Railway Volume対応）
+# DATA_DIR環境変数で永続化ディレクトリを指定
+DATA_DIR = os.environ.get("DATA_DIR", "/tmp")
+TOKEN_FILE_PATH = os.path.join(DATA_DIR, "canva_tokens.json")
+
+# ディレクトリが存在しない場合は作成
+if not os.path.exists(DATA_DIR):
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+    except Exception:
+        pass
 
 def save_tokens_to_file(access_token, refresh_token):
     """トークンをファイルに保存（再起動後も維持）"""

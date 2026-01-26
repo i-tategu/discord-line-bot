@@ -37,8 +37,18 @@ STATUS_CONFIG = {
     },
 }
 
-# データファイル
-DATA_FILE = os.path.join(os.path.dirname(__file__), "customers.json")
+# データファイル（Railway Volume対応）
+# 環境変数 DATA_DIR が設定されていればそちらを使用（永続化）
+# 未設定の場合はローカル開発用にカレントディレクトリを使用
+DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(__file__))
+DATA_FILE = os.path.join(DATA_DIR, "customers.json")
+
+# ディレクトリが存在しない場合は作成
+if DATA_DIR and not os.path.exists(DATA_DIR):
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+    except Exception:
+        pass  # 作成失敗時はそのまま続行
 
 
 def load_customers():
