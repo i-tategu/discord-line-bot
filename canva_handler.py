@@ -834,6 +834,8 @@ def create_pdf(order_data, temp_dir):
     c.showPage()
 
     # ========== 2ページ目: 背景cutout + テキスト + ツリー ==========
+    # PPTXと同じスケール係数を使用
+    FONT_SCALE = PAGE_SIZE[0] / 500  # = 2.0
     board_size_pct = sim_data.get('boardSize', 130) / 100
 
     # 背景cutout画像
@@ -867,36 +869,45 @@ def create_pdf(order_data, temp_dir):
     except Exception as e:
         print(f"[WARN] Cutout error: {e}")
 
-    # テキスト要素（簡略化）
+    # テキスト要素（PPTXと同じロジック）
     c.setFillColorRGB(*text_color_hex)
 
     # タイトル
     title_key = sim_data.get('title', 'wedding')
     title_text = sim_data.get('customTitle', '') if title_key == 'custom' else TITLES.get(title_key, 'Wedding Certificate')
+    title_x = PAGE_SIZE[0] * (sim_data.get('titleX', 50) / 100)
     title_y = PAGE_SIZE[1] * (1 - sim_data.get('titleY', 22) / 100)
-    c.setFont("Helvetica", 24)
-    c.drawCentredString(PAGE_SIZE[0]/2, title_y, title_text)
+    title_size = 24 * (sim_data.get('titleSize', 100) / 100) * FONT_SCALE
+    c.setFont("Helvetica", title_size)
+    c.drawCentredString(title_x, title_y, title_text)
 
     # 本文
     template_key = sim_data.get('template', 'holy')
     body_text = sim_data.get('customText', '') if template_key == 'custom' else TEMPLATES.get(template_key, '')
+    body_x = PAGE_SIZE[0] * (sim_data.get('bodyX', 50) / 100)
     body_y = PAGE_SIZE[1] * (1 - sim_data.get('bodyY', 32) / 100)
-    c.setFont("Helvetica", 11)
+    body_size = 11 * (sim_data.get('bodySize', 115) / 100) * FONT_SCALE
+    body_line_height = sim_data.get('bodyLineHeight', 1.4)
+    c.setFont("Helvetica", body_size)
     for i, line in enumerate(body_text.split('\n')):
-        c.drawCentredString(PAGE_SIZE[0]/2, body_y - i*16, line.strip())
+        c.drawCentredString(body_x, body_y - i * body_size * body_line_height, line.strip())
 
     # 日付
     date_format_key = sim_data.get('dateFormat', 'western')
     formatted_date = sim_data.get('customDate', '') if date_format_key == 'custom' else format_date(order_data['wedding_date'], date_format_key)
+    date_x = PAGE_SIZE[0] * (sim_data.get('dateX', 50) / 100)
     date_y = PAGE_SIZE[1] * (1 - sim_data.get('dateY', 60) / 100)
-    c.setFont("Helvetica", 18)
-    c.drawCentredString(PAGE_SIZE[0]/2, date_y, formatted_date)
+    date_size = 18 * (sim_data.get('dateSize', 85) / 100) * FONT_SCALE
+    c.setFont("Helvetica", date_size)
+    c.drawCentredString(date_x, date_y, formatted_date)
 
     # 名前
+    name_x = PAGE_SIZE[0] * (sim_data.get('nameX', 50) / 100)
     name_y = PAGE_SIZE[1] * (1 - sim_data.get('nameY', 74) / 100)
-    c.setFont("Helvetica", 28)
+    name_size = 32 * (sim_data.get('nameSize', 90) / 100) * FONT_SCALE
+    c.setFont("Helvetica", name_size)
     name_text = f"{groom}  &  {bride}"
-    c.drawCentredString(PAGE_SIZE[0]/2, name_y, name_text)
+    c.drawCentredString(name_x, name_y, name_text)
 
     # ツリー画像（透明度保持）
     if sim_data.get('showTree', False):
