@@ -1048,8 +1048,17 @@ def mark_order_processed(order_id, design_url, wc_url, wc_key, wc_secret):
         ]
     }
 
-    response = requests.put(url, json=data, auth=(wc_key, wc_secret))
-    return response.status_code == 200
+    try:
+        response = requests.put(url, json=data, auth=(wc_key, wc_secret))
+        print(f"[WC Update] Status: {response.status_code}")
+        if response.status_code != 200:
+            print(f"[WC Update] Error: {response.text[:500]}")
+            return False
+        print(f"[WC Update] Order #{order_id} marked as processed")
+        return True
+    except Exception as e:
+        print(f"[WC Update] Exception: {e}")
+        return False
 
 
 def process_order(order_id, config):
