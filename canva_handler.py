@@ -1526,7 +1526,8 @@ def send_shipping_notification(order_data, order, bot_token):
     product_names = ', '.join(products) if products else order_data.get('board_name', '')
 
     embed = {
-        "title": f"🟡 未発送 | #{order_data['order_id']} {customer_name} 様",
+        "title": f"🟡 未発送 | {customer_name} 様",
+        "description": f"**注文番号: `#{order_data['order_id']}`**",
         "color": 0xFFD700,  # 黄色
         "fields": [
             {"name": "📞 電話", "value": customer_phone or "N/A", "inline": True},
@@ -1542,6 +1543,12 @@ def send_shipping_notification(order_data, order, bot_token):
         {
             "type": 1,  # Action Row
             "components": [
+                {
+                    "type": 2,  # Button
+                    "style": 5,  # Link
+                    "label": "🐱 B2クラウドを開く",
+                    "url": "https://newb2web.kuronekoyamato.co.jp/single_issue_simple_reg.html",
+                },
                 {
                     "type": 2,  # Button
                     "style": 1,  # Primary (青)
