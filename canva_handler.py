@@ -871,6 +871,19 @@ def create_pptx(order_data, temp_dir):
                 px_to_emu(img_x), px_to_emu(img_y),
                 px_to_emu(draw_width), px_to_emu(draw_height)
             )
+
+            # デバッグ: 検出した板の境界を赤枠で表示
+            from pptx.enum.shapes import MSO_SHAPE
+            from pptx.dml.color import RGBColor as RGB
+            debug_rect = slide2.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE,
+                px_to_emu(actual_board_left), px_to_emu(actual_board_top),
+                px_to_emu(actual_board_width), px_to_emu(actual_board_height)
+            )
+            debug_rect.fill.background()  # 塗りつぶしなし
+            debug_rect.line.color.rgb = RGB(255, 0, 0)  # 赤い枠線
+            debug_rect.line.width = Pt(2)
+            print(f"[DEBUG] Added red boundary rectangle")
         except Exception as e:
             print(f"[WARN] Background image error: {e}")
 
