@@ -991,7 +991,7 @@ def create_pdf(order_data, temp_dir):
     name_text = f"{groom}  &  {bride}"
     c.drawCentredString(name_x, name_y, name_text)
 
-    # ツリー画像（透明度保持）
+    # ツリー画像（透明度保持）- 板サイズを基準に計算
     if sim_data.get('showTree', False):
         tree_type = sim_data.get('treeType', 'simple')
         tree_x_pct = sim_data.get('treeX', 0.75)
@@ -1000,19 +1000,14 @@ def create_pdf(order_data, temp_dir):
 
         tree_url = f"{TREE_IMAGES_URL}/tree-{tree_type}.png"
         print(f"[PDF] Downloading tree: {tree_url}")
+        print(f"[PDF] Tree params: x={tree_x_pct}, y={tree_y_pct}, size={tree_size_pct*100}%")
+        print(f"[PDF] Board size: {actual_board_w:.0f}x{actual_board_h:.0f}")
 
         try:
             response = requests.get(tree_url, timeout=30)
             if response.status_code == 200:
                 tree_img = Image.open(BytesIO(response.content))
                 print(f"[PDF] Tree original: {tree_img.size}, mode={tree_img.mode}")
-
-                # リサイズ
-                max_size = 400
-                if max(tree_img.size) > max_size:
-                    ratio = max_size / max(tree_img.size)
-                    new_size = (int(tree_img.size[0] * ratio), int(tree_img.size[1] * ratio))
-                    tree_img = tree_img.resize(new_size, Image.LANCZOS)
 
                 # RGBA確保
                 if tree_img.mode != 'RGBA':
@@ -1025,18 +1020,35 @@ def create_pdf(order_data, temp_dir):
                 tree_path = os.path.join(temp_dir, 'tree.png')
                 tree_img.save(tree_path, 'PNG')
 
-                # ツリーサイズ計算（シミュレーター係数0.08を調整）
-                # PDFページサイズに合わせてスケール
-                tree_w, tree_h = tree_img.size
-                # 係数を0.2に増加（シミュレーターの0.08 × 2.5 = PDF用に見やすいサイズ）
-                sim_scale = tree_size_pct * 0.2
-                # シミュレーターのキャンバスは約500px、PDFは1000pxなのでx2
-                draw_w = tree_w * sim_scale * (PAGE_SIZE[0] / 500)
-                draw_h = tree_h * sim_scale * (PAGE_SIZE[1] / 500)
+                # ===== 板サイズ基準のツリーサイズ計算 =====
+                # シミュレーターでは treeSize=80 で板の約25-30%の幅になる
+                # 板幅の35%をベースに、treeSizeで調整
+                tree_base_ratio = 0.35  # treeSize=100%時に板幅の35%
+                draw_w = actual_board_w * tree_size_pct * tree_base_ratio
 
-                # 位置計算（ページ相対、シミュレーターと同じ）
-                x = PAGE_SIZE[0] * tree_x_pct - draw_w / 2
-                y = PAGE_SIZE[1] * (1 - tree_y_pct) - draw_h / 2
+                # アスペクト比を維持
+                tree_w, tree_h = tree_img.size
+                aspect_ratio = tree_h / tree_w
+                draw_h = draw_w * aspect_ratio
+
+                print(f"[PDF] Tree draw size: {draw_w:.0f}x{draw_h:.0f} ({draw_w/actual_board_w*100:.1f}% of board)")
+
+                # ===== 板を基準にした位置計算 =====
+                # treeX, treeY は板内での相対位置（0-1）
+                # 板の左上を(0,0)、右下を(1,1)とする
+                # 板の実際の左端・上端を計算
+                board_left = board_center_x - actual_board_w / 2
+                board_top = board_center_y + actual_board_h / 2  # PDF座標系（Y軸上向き）
+
+                # ツリー中心位置（板内座標）
+                tree_center_x = board_left + actual_board_w * tree_x_pct
+                tree_center_y = board_top - actual_board_h * tree_y_pct  # Y軸反転
+
+                # 左下座標に変換
+                x = tree_center_x - draw_w / 2
+                y = tree_center_y - draw_h / 2
+
+                print(f"[PDF] Tree position: center=({tree_center_x:.0f}, {tree_center_y:.0f}), corner=({x:.0f}, {y:.0f})")
 
                 # mask='auto' でPNG透明度を自動適用
                 c.drawImage(tree_path, x, y, width=draw_w, height=draw_h, mask='auto')
