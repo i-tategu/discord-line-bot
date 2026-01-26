@@ -654,11 +654,38 @@ def create_pptx(order_data, temp_dir):
         tree_size_pct = sim_data.get('treeSize', 80) / 100
 
         tree_url = f"{TREE_IMAGES_URL}/tree-{tree_type}.png"
-        tree_path = download_image(tree_url, temp_dir, preserve_transparency=True)
+        print(f"[TREE] Downloading: {tree_url}")
 
-        if tree_path and os.path.exists(tree_path):
-            try:
-                tree_img = Image.open(tree_path)
+        try:
+            # 直接ダウンロードしてPNG形式を明示的に保持
+            response = requests.get(tree_url, timeout=30)
+            if response.status_code == 200:
+                tree_img = Image.open(BytesIO(response.content))
+                print(f"[TREE] Original: {tree_img.size}, mode={tree_img.mode}")
+
+                # リサイズ
+                max_size = 800
+                if max(tree_img.size) > max_size:
+                    ratio = max_size / max(tree_img.size)
+                    new_size = (int(tree_img.size[0] * ratio), int(tree_img.size[1] * ratio))
+                    tree_img = tree_img.resize(new_size, Image.LANCZOS)
+
+                # RGBA確保
+                if tree_img.mode != 'RGBA':
+                    tree_img = tree_img.convert('RGBA')
+                print(f"[TREE] After resize: {tree_img.size}, mode={tree_img.mode}")
+
+                # 透明度チェック
+                alpha = tree_img.split()[3]
+                alpha_extrema = alpha.getextrema()
+                print(f"[TREE] Alpha range: {alpha_extrema}")
+
+                # BytesIOにPNGとして保存
+                tree_buffer = BytesIO()
+                tree_img.save(tree_buffer, 'PNG', optimize=False)
+                tree_buffer.seek(0)
+                print(f"[TREE] PNG buffer size: {len(tree_buffer.getvalue()) / 1024:.1f}KB")
+
                 tree_width, tree_height = tree_img.size
                 base_tree_size = min(SLIDE_WIDTH_PX, SLIDE_HEIGHT_PX) * 0.3
                 draw_tree_width = base_tree_size * tree_size_pct
@@ -666,13 +693,17 @@ def create_pptx(order_data, temp_dir):
                 tree_x = SLIDE_WIDTH_PX * tree_x_pct - draw_tree_width / 2
                 tree_y = SLIDE_HEIGHT_PX * tree_y_pct - draw_tree_height / 2
 
+                # BytesIOから直接追加
                 slide2.shapes.add_picture(
-                    tree_path,
+                    tree_buffer,
                     px_to_emu(tree_x), px_to_emu(tree_y),
                     px_to_emu(draw_tree_width), px_to_emu(draw_tree_height)
                 )
-            except Exception as e:
-                print(f"[WARN] Tree image error: {e}")
+                print(f"[TREE] Added to slide at ({tree_x:.0f}, {tree_y:.0f})")
+        except Exception as e:
+            print(f"[WARN] Tree image error: {e}")
+            import traceback
+            traceback.print_exc()
 
     # ========== 3-6ページ目: cutout画像 ==========
     cutout_labels = [
