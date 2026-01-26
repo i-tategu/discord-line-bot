@@ -11,6 +11,9 @@ import json
 import asyncio
 import requests
 import threading
+import hmac
+import hashlib
+import base64
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 import discord
@@ -617,6 +620,16 @@ def health_check():
     return jsonify({"status": "ok", "canva_enabled": CANVA_ENABLED})
 
 
+def verify_woo_webhook_signature(payload, signature, secret):
+    """WooCommerce Webhook署名をHMAC-SHA256で検証"""
+    if not secret or not signature:
+        return False
+    expected = base64.b64encode(
+        hmac.new(secret.encode('utf-8'), payload, hashlib.sha256).digest()
+    ).decode('utf-8')
+    return hmac.compare_digest(expected, signature)
+
+
 @api.route("/api/woo-webhook", methods=["GET", "POST"])
 def woo_webhook():
     """WooCommerce Webhook受信 → Canva自動化"""
@@ -629,6 +642,7 @@ def woo_webhook():
     webhook_topic = request.headers.get("X-WC-Webhook-Topic", "")
 
     # Pingテスト検出（トピックがない、またはボディが空/webhook_idのみ）
+    raw_payload = request.get_data()
     data = request.get_json(force=True, silent=True) or {}
     if not data or data.get("webhook_id") and not data.get("id"):
         print(f"[Webhook] Ping test received from {webhook_source}")
@@ -637,9 +651,13 @@ def woo_webhook():
     if not CANVA_ENABLED:
         return jsonify({"error": "Canva handler not available"}), 503
 
-    if get_woo_webhook_secret():
+    # Webhook署名検証（設定されている場合）
+    webhook_secret = get_woo_webhook_secret()
+    if webhook_secret:
         signature = request.headers.get("X-WC-Webhook-Signature", "")
-        # TODO: HMACで検証（セキュリティ強化用）
+        if not verify_woo_webhook_signature(raw_payload, signature, webhook_secret):
+            print(f"[Webhook] Invalid signature from {webhook_source}")
+            return jsonify({"error": "Invalid signature"}), 401
 
     order_id = data.get("id")
     if not order_id:
