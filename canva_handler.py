@@ -835,10 +835,12 @@ def create_pptx(order_data, temp_dir):
                 layout_adj = get_landscape_layout_adjustments()
                 print(f"[Layout] Landscape adjustments applied")
 
-            base_scale = 0.95
+            # 板サイズ: シミュレーターと同等の見た目になるよう調整
+            # シミュレーターでは板がキャンバスの大部分を占める
+            base_scale = 1.1  # 0.95→1.1に増加して板を大きく
             img_ratio = bg_width / bg_height
             max_width = SLIDE_WIDTH_PX * base_scale
-            # 4:3コンテンツエリア内に収める
+            # 4:3コンテンツエリアを基準に、少しはみ出してもOK
             max_height = SIMULATOR_ASPECT_HEIGHT * base_scale
 
             if bg_width / max_width > bg_height / max_height:
