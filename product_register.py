@@ -131,9 +131,8 @@ def get_next_number(wood_type):
         pass
     return max_num + 1
 
-def generate_description(wood_type, width, height, number):
+def generate_description(wood_type, width, height, number, thickness=20):
     """商品説明HTMLを自動生成"""
-    thickness = 20
     wood_romaji = WOOD_ROMAJI.get(wood_type, "Natural Wood")
     info = WOOD_INFO.get(wood_type, {})
     meaning = info.get("meaning", "自然の恵み・温もり")
@@ -187,7 +186,7 @@ def upload_media(image_data, filename):
         return res.json()['id']
     raise Exception(f"Media upload failed: {res.status_code} {res.text[:200]}")
 
-def create_product(wood_type, width, height, price, image_ids, number):
+def create_product(wood_type, width, height, price, image_ids, number, thickness=20):
     """WooCommerce商品を作成"""
     url = f"{get_wp_url()}/wp-json/wc/v3/products"
     headers = _wp_auth_headers()
@@ -198,7 +197,7 @@ def create_product(wood_type, width, height, price, image_ids, number):
     guests_text, _ = calculate_recommended_guests(width, height)
 
     product_name = f"【一点物】 {wood_type} 一枚板 ({width}x{height}mm) No.{number:02d}"
-    description = generate_description(wood_type, width, height, f"{number:02d}")
+    description = generate_description(wood_type, width, height, f"{number:02d}", thickness)
     short_desc = f"【世界にひとつ】{wood_type}の一枚板ウェディングボード。木言葉は「{meaning}」。"
 
     # カテゴリ・タグ
@@ -233,7 +232,7 @@ def create_product(wood_type, width, height, price, image_ids, number):
             {"key": "wood_type", "value": wood_type},
             {"key": "board_width", "value": str(width)},
             {"key": "board_height", "value": str(height)},
-            {"key": "board_thickness", "value": "20"},
+            {"key": "board_thickness", "value": str(thickness)},
             {"key": "_recommended_guests", "value": guests_text},
         ]
     }
@@ -273,6 +272,7 @@ def register_routes(app):
             wood_type = request.form.get('wood_type')
             width = int(request.form.get('width', 0))
             height = int(request.form.get('height', 0))
+            thickness = int(request.form.get('thickness', 20))
             price_grade = request.form.get('price_grade', 'A')
             price = PRICE_MAP.get(price_grade, 30000)
 
@@ -298,7 +298,7 @@ def register_routes(app):
             number = get_next_number(wood_type)
 
             # 商品作成
-            result = create_product(wood_type, width, height, price, image_ids, number)
+            result = create_product(wood_type, width, height, price, image_ids, number, thickness)
             print(f"[Product Register] Created: {result['name']} (ID: {result['id']})")
 
             return jsonify({
@@ -435,6 +435,10 @@ select, input[type="number"] { width: 100%; padding: 10px 12px; border: 1px soli
             <div>
                 <label>高さ (H)</label>
                 <input type="number" name="height" placeholder="例: 600" required min="100" max="2000">
+            </div>
+            <div>
+                <label>厚み (D)</label>
+                <input type="number" name="thickness" placeholder="例: 20" value="20" min="5" max="200">
             </div>
         </div>
     </div>
