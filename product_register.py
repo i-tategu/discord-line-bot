@@ -438,7 +438,7 @@ select, input[type="number"] { width: 100%; padding: 10px 12px; border: 1px soli
             </div>
             <div>
                 <label>厚み (D)</label>
-                <input type="number" name="thickness" placeholder="例: 20" value="20" min="5" max="200">
+                <input type="number" name="thickness" placeholder="例: 20" min="5" max="200">
             </div>
         </div>
     </div>
