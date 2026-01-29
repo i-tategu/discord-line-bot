@@ -1442,6 +1442,30 @@ def send_telegram_message(bot_token, chat_id, text, parse_mode='HTML', reply_mar
         return None
 
 
+def get_telegram_topic_id(order_id, config):
+    """WP REST APIからステータストピックIDを取得"""
+    wp_url = config.get('wp_url', 'https://i-tategu-shop.com')
+    token = 'itg_ship_2026'
+    try:
+        resp = requests.get(
+            f"{wp_url}/wp-json/i-tategu/v1/status-topic/{order_id}?token={token}",
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            topic_id = data.get('topic_id')
+            if topic_id:
+                print(f"[Telegram] Got topic_id={topic_id} for order #{order_id}")
+                return topic_id
+            else:
+                print(f"[Telegram] No topic_id found for order #{order_id}")
+        else:
+            print(f"[Telegram] Failed to get topic_id: {resp.status_code}")
+    except Exception as e:
+        print(f"[Telegram] Error getting topic_id: {e}")
+    return None
+
+
 def send_telegram_ec_notification(order_data, design, order, config):
     """Telegram EC管理（ステータスグループ）に通知: 名前、金額/決済、板名、挙式日、連絡先、Canvaリンク"""
     bot_token = config.get('telegram_bot_token', '')
@@ -1449,6 +1473,9 @@ def send_telegram_ec_notification(order_data, design, order, config):
     if not bot_token or not chat_id:
         print("[Telegram] Missing bot_token or status group ID")
         return False
+
+    # 注文のトピックIDを取得（個別トピックに送信するため）
+    topic_id = get_telegram_topic_id(order_data['order_id'], config)
 
     edit_url = design.get("urls", {}).get("edit_url", "")
     groom = order_data['sim_data'].get('groomName', '')
@@ -1476,9 +1503,9 @@ def send_telegram_ec_notification(order_data, design, order, config):
     msg += f"📧 {customer_email}\n\n"
     msg += f"🎨 <a href=\"{edit_url}\">Canvaデザインを開く</a>"
 
-    result = send_telegram_message(bot_token, chat_id, msg)
+    result = send_telegram_message(bot_token, chat_id, msg, thread_id=topic_id)
     if result:
-        print(f"[Telegram] EC notification sent for order #{order_data['order_id']}")
+        print(f"[Telegram] EC notification sent for order #{order_data['order_id']} (topic={topic_id})")
     return bool(result)
 
 
