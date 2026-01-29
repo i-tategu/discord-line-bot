@@ -875,6 +875,7 @@ def woo_webhook():
                 'telegram_bot_token': os.environ.get('TELEGRAM_BOT_TOKEN', ''),
                 'telegram_status_group': os.environ.get('TELEGRAM_STATUS_GROUP', ''),
                 'telegram_shipping_group': os.environ.get('TELEGRAM_SHIPPING_GROUP', ''),
+                'telegram_status_mgmt_group': os.environ.get('TELEGRAM_STATUS_MGMT_GROUP', ''),
             }
             canva_process_order(order_id, config)
         except Exception as e:
@@ -916,6 +917,7 @@ def api_canva_process():
             'telegram_bot_token': os.environ.get('TELEGRAM_BOT_TOKEN', ''),
             'telegram_status_group': os.environ.get('TELEGRAM_STATUS_GROUP', ''),
             'telegram_shipping_group': os.environ.get('TELEGRAM_SHIPPING_GROUP', ''),
+            'telegram_status_mgmt_group': os.environ.get('TELEGRAM_STATUS_MGMT_GROUP', ''),
         }
         result = canva_process_order(order_id, config)
         return jsonify({"success": result, "order_id": order_id})

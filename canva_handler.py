@@ -1467,19 +1467,15 @@ def get_telegram_topic_id(order_id, config):
 
 
 def send_telegram_ec_notification(order_data, design, order, config):
-    """Telegram EC管理（ステータスグループ）に通知: 名前、金額/決済、板名、挙式日、連絡先、Canvaリンク"""
+    """Telegram EC管理グループに通知 + ステータス管理「購入済み」トピックにも送信"""
     bot_token = config.get('telegram_bot_token', '')
-    chat_id = config.get('telegram_status_group', '')
-    if not bot_token or not chat_id:
-        print("[Telegram] Missing bot_token or status group ID")
+    ec_group = config.get('telegram_status_group', '')  # EC管理グループ
+    status_group = config.get('telegram_status_mgmt_group', '')  # ステータス管理グループ
+    if not bot_token or not ec_group:
+        print("[Telegram] Missing bot_token or EC group ID")
         return False
 
-    # 注文のトピックIDを取得（個別トピックに送信するため）
-    topic_id = get_telegram_topic_id(order_data['order_id'], config)
-
     edit_url = design.get("urls", {}).get("edit_url", "")
-    groom = order_data['sim_data'].get('groomName', '')
-    bride = order_data['sim_data'].get('brideName', '')
 
     billing = order.get('billing', {}) if order else {}
     customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
@@ -1503,9 +1499,21 @@ def send_telegram_ec_notification(order_data, design, order, config):
     msg += f"📧 {customer_email}\n\n"
     msg += f"🎨 <a href=\"{edit_url}\">Canvaデザインを開く</a>"
 
-    result = send_telegram_message(bot_token, chat_id, msg, thread_id=topic_id)
+    # 1. EC管理グループの個別トピックに送信
+    topic_id = get_telegram_topic_id(order_data['order_id'], config)
+    result = send_telegram_message(bot_token, ec_group, msg, thread_id=topic_id)
     if result:
         print(f"[Telegram] EC notification sent for order #{order_data['order_id']} (topic={topic_id})")
+
+    # 2. ステータス管理グループの「購入済み」トピック(thread_id=7)に送信
+    if status_group:
+        status_msg = f"💳 <b>購入済み #{order_data['order_id']}</b>\n\n"
+        status_msg += f"👤 {customer_name}\n"
+        status_msg += f"📦 {product_names}\n"
+        status_msg += f"💰 ¥{int(float(order_total)):,}"
+        send_telegram_message(bot_token, status_group, status_msg, thread_id=7)
+        print(f"[Telegram] Status mgmt (購入済み) sent for order #{order_data['order_id']}")
+
     return bool(result)
 
 
