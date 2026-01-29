@@ -27,6 +27,14 @@ from customer_manager import (
     get_status_summary, get_all_customers_grouped, load_customers
 )
 
+# 商品登録モジュール
+try:
+    import product_register
+    PRODUCT_REGISTER_ENABLED = True
+except ImportError as e:
+    PRODUCT_REGISTER_ENABLED = False
+    print(f"[WARN] Product register not available: {e}")
+
 # Canva自動化ハンドラー
 try:
     from canva_handler import process_order as canva_process_order, get_current_tokens
@@ -93,6 +101,12 @@ THREAD_MAP_FILE = os.path.join(os.path.dirname(__file__), "thread_map.json")
 
 # Flask API
 api = Flask(__name__)
+api.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24).hex())
+
+# 商品登録ルート登録
+if PRODUCT_REGISTER_ENABLED:
+    product_register.register_routes(api)
+    print("[OK] Product register routes enabled")
 
 # Discord Bot設定
 intents = discord.Intents.default()
