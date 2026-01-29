@@ -872,6 +872,9 @@ def woo_webhook():
                 'canva_refresh_token': get_canva_refresh_token(),
                 'discord_webhook': get_canva_webhook_url(),
                 'discord_bot_token': get_discord_token(),
+                'telegram_bot_token': os.environ.get('TELEGRAM_BOT_TOKEN', ''),
+                'telegram_status_group': os.environ.get('TELEGRAM_STATUS_GROUP', ''),
+                'telegram_shipping_group': os.environ.get('TELEGRAM_SHIPPING_GROUP', ''),
             }
             canva_process_order(order_id, config)
         except Exception as e:
@@ -910,6 +913,9 @@ def api_canva_process():
             'canva_refresh_token': get_canva_refresh_token(),
             'discord_webhook': get_canva_webhook_url(),
             'discord_bot_token': get_discord_token(),
+            'telegram_bot_token': os.environ.get('TELEGRAM_BOT_TOKEN', ''),
+            'telegram_status_group': os.environ.get('TELEGRAM_STATUS_GROUP', ''),
+            'telegram_shipping_group': os.environ.get('TELEGRAM_SHIPPING_GROUP', ''),
         }
         result = canva_process_order(order_id, config)
         return jsonify({"success": result, "order_id": order_id})

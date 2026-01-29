@@ -1418,6 +1418,113 @@ def create_pdf(order_data, temp_dir):
     return output_path
 
 
+def send_telegram_message(bot_token, chat_id, text, parse_mode='HTML', reply_markup=None, thread_id=None):
+    """Telegram Bot API でメッセージ送信"""
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        'chat_id': chat_id,
+        'text': text,
+        'parse_mode': parse_mode,
+    }
+    if reply_markup:
+        payload['reply_markup'] = json.dumps(reply_markup)
+    if thread_id:
+        payload['message_thread_id'] = thread_id
+    try:
+        resp = requests.post(url, json=payload)
+        if resp.status_code == 200:
+            return resp.json()
+        else:
+            print(f"[Telegram] Failed: {resp.status_code} - {resp.text}")
+            return None
+    except Exception as e:
+        print(f"[Telegram] Error: {e}")
+        return None
+
+
+def send_telegram_ec_notification(order_data, design, order, config):
+    """Telegram EC管理（ステータスグループ）に通知: 名前、金額/決済、板名、挙式日、連絡先、Canvaリンク"""
+    bot_token = config.get('telegram_bot_token', '')
+    chat_id = config.get('telegram_status_group', '')
+    if not bot_token or not chat_id:
+        print("[Telegram] Missing bot_token or status group ID")
+        return False
+
+    edit_url = design.get("urls", {}).get("edit_url", "")
+    groom = order_data['sim_data'].get('groomName', '')
+    bride = order_data['sim_data'].get('brideName', '')
+
+    billing = order.get('billing', {}) if order else {}
+    customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
+    order_total = order.get('total', '0') if order else '0'
+    payment_method = order.get('payment_method_title', '') if order else ''
+    customer_phone = billing.get('phone', '')
+    customer_email = billing.get('email', '')
+
+    products = []
+    for item in order.get('line_items', []):
+        products.append(item.get('name', ''))
+    product_names = ', '.join(products) if products else f"{order_data['board_name']} No.{order_data['board_number']}"
+
+    msg = f"🛒 <b>新規注文 #{order_data['order_id']}</b>\n\n"
+    msg += f"👤 {customer_name}\n"
+    msg += f"💰 ¥{int(float(order_total)):,} / {payment_method}\n"
+    msg += f"📦 {order_data['board_name']} No.{order_data['board_number']}\n"
+    msg += f"   {product_names}\n"
+    msg += f"📅 挙式日: {order_data['wedding_date']}\n\n"
+    msg += f"📞 {customer_phone}\n"
+    msg += f"📧 {customer_email}\n\n"
+    msg += f"🎨 <a href=\"{edit_url}\">Canvaデザインを開く</a>"
+
+    result = send_telegram_message(bot_token, chat_id, msg)
+    if result:
+        print(f"[Telegram] EC notification sent for order #{order_data['order_id']}")
+    return bool(result)
+
+
+def send_telegram_shipping_notification(order_data, order, config):
+    """Telegram 発送管理グループに通知: 名前、注文番号、板名、ボタン3つ"""
+    bot_token = config.get('telegram_bot_token', '')
+    chat_id = config.get('telegram_shipping_group', '')
+    if not bot_token or not chat_id:
+        print("[Telegram] Missing bot_token or shipping group ID")
+        return False
+
+    billing = order.get('billing', {}) if order else {}
+    customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
+
+    products = []
+    for item in order.get('line_items', []):
+        products.append(item.get('name', ''))
+    product_names = ', '.join(products) if products else f"{order_data['board_name']} No.{order_data['board_number']}"
+
+    order_id = order_data['order_id']
+
+    msg = f"📦 <b>発送準備 #{order_id}</b>\n\n"
+    msg += f"👤 {customer_name} 様\n"
+    msg += f"📦 {order_data['board_name']} No.{order_data['board_number']}\n"
+    msg += f"   {product_names}"
+
+    yamato_url = 'https://bmypage.kuronekoyamato.co.jp/bmypage/servlet/jp.co.kuronekoyamato.wur.hmp.servlet.user.HMPLGI0010JspServlet'
+
+    reply_markup = {
+        'inline_keyboard': [
+            [
+                {'text': '🚚 ヤマトB2ログイン', 'url': yamato_url},
+                {'text': '📝 B2自動入力', 'callback_data': f'b2_{order_id}'},
+            ],
+            [
+                {'text': '✅ 発送完了', 'callback_data': f'shipped_{order_id}'},
+            ],
+        ]
+    }
+
+    result = send_telegram_message(bot_token, chat_id, msg, reply_markup=reply_markup)
+    if result:
+        print(f"[Telegram] Shipping notification sent for order #{order_data['order_id']}")
+    return bool(result)
+
+
 def send_discord_notification(order_data, design, webhook_url, order=None):
     """Discord通知送信（新規注文 + Canvaリンク統合版）"""
     if not webhook_url:
@@ -1736,6 +1843,15 @@ def process_order(order_id, config):
                 send_shipping_notification(order_data, order, bot_token)
             else:
                 print(f"[WARN] No bot token, skipping shipping notification")
+
+            # Telegram通知（EC管理 + 発送管理）
+            if config.get('telegram_bot_token'):
+                print(f"[Canva] Sending Telegram notifications...")
+                send_telegram_ec_notification(order_data, design, order, config)
+                send_telegram_shipping_notification(order_data, order, config)
+                print(f"[Canva] Telegram notifications sent")
+            else:
+                print(f"[WARN] No Telegram bot token, skipping Telegram notifications")
 
             # 処理済みマーク（ここでロックも解除される）
             design_url = design.get('urls', {}).get('edit_url', '')
