@@ -1418,7 +1418,7 @@ def create_pdf(order_data, temp_dir):
     return output_path
 
 
-def send_telegram_message(bot_token, chat_id, text, parse_mode='HTML', reply_markup=None, thread_id=None):
+def send_telegram_message(bot_token, chat_id, text, parse_mode='HTML', reply_markup=None, thread_id=None, silent=False):
     """Telegram Bot API でメッセージ送信"""
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {
@@ -1430,6 +1430,8 @@ def send_telegram_message(bot_token, chat_id, text, parse_mode='HTML', reply_mar
         payload['reply_markup'] = json.dumps(reply_markup)
     if thread_id:
         payload['message_thread_id'] = thread_id
+    if silent:
+        payload['disable_notification'] = True
     try:
         resp = requests.post(url, json=payload)
         if resp.status_code == 200:
@@ -1502,6 +1504,27 @@ def get_telegram_topic_id(order_id, config):
     return None
 
 
+def create_telegram_topic(bot_token, chat_id, name):
+    """Telegram Bot APIでフォーラムトピックを直接作成（フォールバック用）"""
+    url = f"https://api.telegram.org/bot{bot_token}/createForumTopic"
+    payload = {
+        'chat_id': chat_id,
+        'name': name,
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            topic_id = data.get('result', {}).get('message_thread_id')
+            print(f"[Telegram] Created topic '{name}' with id={topic_id}")
+            return topic_id
+        else:
+            print(f"[Telegram] Failed to create topic: {resp.status_code} - {resp.text}")
+    except Exception as e:
+        print(f"[Telegram] Error creating topic: {e}")
+    return None
+
+
 def send_telegram_ec_notification(order_data, design, order, config):
     """Telegram EC管理グループに通知 + ステータス管理「購入済み」トピックにも送信"""
     bot_token = config.get('telegram_bot_token', '')
@@ -1525,7 +1548,7 @@ def send_telegram_ec_notification(order_data, design, order, config):
         products.append(item.get('name', ''))
     product_names = ', '.join(products) if products else f"{order_data['board_name']} No.{order_data['board_number']}"
 
-    msg = f"🛒 <b>新規注文 #{order_data['order_id']}</b>\n\n"
+    msg = f"🛒 <b>#{order_data['order_id']}</b>\n\n"
     msg += f"👤 {customer_name}\n"
     msg += f"💰 ¥{int(float(order_total)):,} / {payment_method}\n"
     msg += f"📦 {order_data['board_name']} No.{order_data['board_number']}\n"
@@ -1624,7 +1647,7 @@ def send_telegram_all_with_crosslinks(order_data, design, order, config):
     product_names = ', '.join(products) if products else f"{order_data['board_name']} No.{order_data['board_number']}"
 
     # ---- 1. EC管理グループへ購入通知 ----
-    ec_msg = f"🛒 <b>新規注文 #{order_id}</b>\n\n"
+    ec_msg = f"🛒 <b>#{order_id}</b>\n\n"
     ec_msg += f"👤 {customer_name}\n"
     ec_msg += f"💰 ¥{int(float(order_total)):,} / {payment_method}\n"
     ec_msg += f"📦 {order_data['board_name']} No.{order_data['board_number']}\n"
@@ -1635,6 +1658,11 @@ def send_telegram_all_with_crosslinks(order_data, design, order, config):
     ec_msg += f"🎨 <a href=\"{edit_url}\">Canvaデザインを開く</a>"
 
     topic_id = get_telegram_topic_id(order_id, config)
+    if not topic_id and ec_group:
+        # フォールバック: WP REST APIでトピックが見つからない場合、Telegram APIで直接作成
+        topic_name = f"#{order_id} {customer_name} 様"
+        topic_id = create_telegram_topic(bot_token, ec_group, topic_name)
+        print(f"[Telegram] Fallback topic creation: topic_id={topic_id}")
     ec_result = send_telegram_message(bot_token, ec_group, ec_msg, thread_id=topic_id)
     ec_msg_id = ec_result.get('result', {}).get('message_id') if ec_result else None
     print(f"[CrossLink] EC msg_id={ec_msg_id}")
@@ -1666,7 +1694,7 @@ def send_telegram_all_with_crosslinks(order_data, design, order, config):
     if address2:
         full_address += f" {address2}"
 
-    ship_msg = f"📦 <b>発送準備 #{order_id}</b>\n\n"
+    ship_msg = f"📦 <b>#{order_id}</b>\n\n"
     ship_msg += f"👤 {customer_name} 様\n"
     ship_msg += f"📦 {order_data['board_name']} No.{order_data['board_number']}\n"
     ship_msg += f"   {product_names}\n\n"
@@ -1687,12 +1715,12 @@ def send_telegram_all_with_crosslinks(order_data, design, order, config):
         ]
     }
 
-    ship_result = send_telegram_message(bot_token, shipping_group, ship_msg, reply_markup=ship_markup)
+    ship_result = send_telegram_message(bot_token, shipping_group, ship_msg, reply_markup=ship_markup, silent=True)
     ship_msg_id = ship_result.get('result', {}).get('message_id') if ship_result else None
     print(f"[CrossLink] Shipping msg_id={ship_msg_id}")
 
     # ---- 3. ステータス管理「購入済み」トピック(thread_id=7) ----
-    status_msg = f"💳 <b>購入済み #{order_id}</b>\n\n"
+    status_msg = f"💳 <b>#{order_id}</b>\n\n"
     status_msg += f"👤 {customer_name}\n"
     status_msg += f"📦 {product_names}\n"
     status_msg += f"💰 ¥{int(float(order_total)):,}"
@@ -1700,7 +1728,7 @@ def send_telegram_all_with_crosslinks(order_data, design, order, config):
     status_result = None
     status_msg_id = None
     if status_group:
-        status_result = send_telegram_message(bot_token, status_group, status_msg, thread_id=7)
+        status_result = send_telegram_message(bot_token, status_group, status_msg, thread_id=7, silent=True)
         status_msg_id = status_result.get('result', {}).get('message_id') if status_result else None
         print(f"[CrossLink] Status msg_id={status_msg_id}")
 
