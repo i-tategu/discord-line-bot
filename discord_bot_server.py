@@ -851,8 +851,8 @@ def woo_webhook():
     except Exception as e:
         print(f"[WARN] Failed to add customer: {e}")
 
-    # designing（デザイン打ち合わせ中 = 支払い確認後）のみ処理
-    if order_status != "designing":
+    # processing（入金確認後）のみ処理 ※ 2026-01-31: designing → processing に変更
+    if order_status != "processing":
         print(f"[Webhook] Skipping order #{order_id} - status '{order_status}' not ready for Canva")
         return jsonify({"status": "skipped", "reason": f"Order status '{order_status}' not ready"})
 

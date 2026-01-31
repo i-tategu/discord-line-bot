@@ -1442,6 +1442,42 @@ def send_telegram_message(bot_token, chat_id, text, parse_mode='HTML', reply_mar
         return None
 
 
+def edit_telegram_message(bot_token, chat_id, message_id, text, parse_mode='HTML', reply_markup=None):
+    """Telegram Bot API でメッセージを編集"""
+    url = f"https://api.telegram.org/bot{bot_token}/editMessageText"
+    payload = {
+        'chat_id': chat_id,
+        'message_id': message_id,
+        'text': text,
+        'parse_mode': parse_mode,
+    }
+    if reply_markup:
+        payload['reply_markup'] = json.dumps(reply_markup)
+    try:
+        resp = requests.post(url, json=payload)
+        if resp.status_code == 200:
+            return resp.json()
+        else:
+            print(f"[Telegram] Edit failed: {resp.status_code} - {resp.text}")
+            return None
+    except Exception as e:
+        print(f"[Telegram] Edit error: {e}")
+        return None
+
+
+def send_telegram_error_notification_tg(order_id, error_message, config):
+    """Canvaエラー時にTelegram EC管理グループへエラー通知（管理者向けのみ）"""
+    bot_token = config.get('telegram_bot_token', '')
+    ec_group = config.get('telegram_status_group', '')
+    if not bot_token or not ec_group:
+        return
+    msg = f"⚠️ <b>Canva処理エラー #{order_id}</b>\n\n"
+    msg += f"❌ {error_message}\n\n"
+    msg += "手動で対応してください。"
+    send_telegram_message(bot_token, ec_group, msg)
+    print(f"[Telegram] Error notification sent for order #{order_id}")
+
+
 def get_telegram_topic_id(order_id, config):
     """WP REST APIからステータストピックIDを取得"""
     wp_url = config.get('wp_url', 'https://i-tategu-shop.com')
@@ -1557,7 +1593,166 @@ def send_telegram_shipping_notification(order_data, order, config):
     result = send_telegram_message(bot_token, chat_id, msg, reply_markup=reply_markup)
     if result:
         print(f"[Telegram] Shipping notification sent for order #{order_data['order_id']}")
-    return bool(result)
+    return result
+
+
+def send_telegram_all_with_crosslinks(order_data, design, order, config):
+    """
+    3グループにTelegram通知 → 相互リンクで編集
+    1. EC管理（購入通知）
+    2. 発送管理（ヤマトボタン付き）
+    3. ステータス管理（購入済みトピック）
+    送信後に各メッセージを編集して相互リンクを追加
+    """
+    bot_token = config.get('telegram_bot_token', '')
+    ec_group = config.get('telegram_status_group', '')
+    shipping_group = config.get('telegram_shipping_group', '')
+    status_group = config.get('telegram_status_mgmt_group', '')
+
+    order_id = order_data['order_id']
+    billing = order.get('billing', {}) if order else {}
+    customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
+    edit_url = design.get("urls", {}).get("edit_url", "")
+    order_total = order.get('total', '0') if order else '0'
+    payment_method = order.get('payment_method_title', '') if order else ''
+    customer_phone = billing.get('phone', '')
+    customer_email = billing.get('email', '')
+
+    products = []
+    for item in order.get('line_items', []):
+        products.append(item.get('name', ''))
+    product_names = ', '.join(products) if products else f"{order_data['board_name']} No.{order_data['board_number']}"
+
+    # ---- 1. EC管理グループへ購入通知 ----
+    ec_msg = f"🛒 <b>新規注文 #{order_id}</b>\n\n"
+    ec_msg += f"👤 {customer_name}\n"
+    ec_msg += f"💰 ¥{int(float(order_total)):,} / {payment_method}\n"
+    ec_msg += f"📦 {order_data['board_name']} No.{order_data['board_number']}\n"
+    ec_msg += f"   {product_names}\n"
+    ec_msg += f"📅 挙式日: {order_data['wedding_date']}\n\n"
+    ec_msg += f"📞 {customer_phone}\n"
+    ec_msg += f"📧 {customer_email}\n\n"
+    ec_msg += f"🎨 <a href=\"{edit_url}\">Canvaデザインを開く</a>"
+
+    topic_id = get_telegram_topic_id(order_id, config)
+    ec_result = send_telegram_message(bot_token, ec_group, ec_msg, thread_id=topic_id)
+    ec_msg_id = ec_result.get('result', {}).get('message_id') if ec_result else None
+    print(f"[CrossLink] EC msg_id={ec_msg_id}")
+
+    # ---- 2. 発送管理グループへ発送準備通知 ----
+    shipping = order.get('shipping', {}) if order else {}
+    postcode = shipping.get('postcode') or billing.get('postcode', '')
+    state = shipping.get('state') or billing.get('state', '')
+    city = shipping.get('city') or billing.get('city', '')
+    address1 = shipping.get('address_1') or billing.get('address_1', '')
+    address2 = shipping.get('address_2') or billing.get('address_2', '')
+
+    JP_STATES = {
+        'JP01': '北海道', 'JP02': '青森県', 'JP03': '岩手県', 'JP04': '宮城県',
+        'JP05': '秋田県', 'JP06': '山形県', 'JP07': '福島県', 'JP08': '茨城県',
+        'JP09': '栃木県', 'JP10': '群馬県', 'JP11': '埼玉県', 'JP12': '千葉県',
+        'JP13': '東京都', 'JP14': '神奈川県', 'JP15': '新潟県', 'JP16': '富山県',
+        'JP17': '石川県', 'JP18': '福井県', 'JP19': '山梨県', 'JP20': '長野県',
+        'JP21': '岐阜県', 'JP22': '静岡県', 'JP23': '愛知県', 'JP24': '三重県',
+        'JP25': '滋賀県', 'JP26': '京都府', 'JP27': '大阪府', 'JP28': '兵庫県',
+        'JP29': '奈良県', 'JP30': '和歌山県', 'JP31': '鳥取県', 'JP32': '島根県',
+        'JP33': '岡山県', 'JP34': '広島県', 'JP35': '山口県', 'JP36': '徳島県',
+        'JP37': '香川県', 'JP38': '愛媛県', 'JP39': '高知県', 'JP40': '福岡県',
+        'JP41': '佐賀県', 'JP42': '長崎県', 'JP43': '熊本県', 'JP44': '大分県',
+        'JP45': '宮崎県', 'JP46': '鹿児島県', 'JP47': '沖縄県'
+    }
+    state_name = JP_STATES.get(state, state)
+    full_address = f"{state_name}{city}{address1}"
+    if address2:
+        full_address += f" {address2}"
+
+    ship_msg = f"📦 <b>発送準備 #{order_id}</b>\n\n"
+    ship_msg += f"👤 {customer_name} 様\n"
+    ship_msg += f"📦 {order_data['board_name']} No.{order_data['board_number']}\n"
+    ship_msg += f"   {product_names}\n\n"
+    ship_msg += f"📮 〒{postcode}\n"
+    ship_msg += f"📍 {full_address}\n"
+    ship_msg += f"📞 {customer_phone}"
+
+    yamato_url = 'https://bmypage.kuronekoyamato.co.jp/bmypage/servlet/jp.co.kuronekoyamato.wur.hmp.servlet.user.HMPLGI0010JspServlet'
+    ship_markup = {
+        'inline_keyboard': [
+            [
+                {'text': '🚚 ヤマトサイトを開く', 'url': yamato_url},
+                {'text': '📝 ヤマト自動入力', 'callback_data': f'b2_{order_id}'},
+            ],
+            [
+                {'text': '✅ 発送完了', 'callback_data': f'shipped_{order_id}'},
+            ],
+        ]
+    }
+
+    ship_result = send_telegram_message(bot_token, shipping_group, ship_msg, reply_markup=ship_markup)
+    ship_msg_id = ship_result.get('result', {}).get('message_id') if ship_result else None
+    print(f"[CrossLink] Shipping msg_id={ship_msg_id}")
+
+    # ---- 3. ステータス管理「購入済み」トピック(thread_id=7) ----
+    status_msg = f"💳 <b>購入済み #{order_id}</b>\n\n"
+    status_msg += f"👤 {customer_name}\n"
+    status_msg += f"📦 {product_names}\n"
+    status_msg += f"💰 ¥{int(float(order_total)):,}"
+
+    status_result = None
+    status_msg_id = None
+    if status_group:
+        status_result = send_telegram_message(bot_token, status_group, status_msg, thread_id=7)
+        status_msg_id = status_result.get('result', {}).get('message_id') if status_result else None
+        print(f"[CrossLink] Status msg_id={status_msg_id}")
+
+    # ---- 4. 相互リンクで各メッセージを編集 ----
+    def tg_link(chat_id, msg_id):
+        """Telegram メッセージへのディープリンク生成"""
+        if not msg_id:
+            return None
+        # スーパーグループのIDは -100 prefix を除去して使う
+        cid = str(chat_id)
+        if cid.startswith('-100'):
+            cid = cid[4:]
+        return f"https://t.me/c/{cid}/{msg_id}"
+
+    ec_link = tg_link(ec_group, ec_msg_id)
+    ship_link = tg_link(shipping_group, ship_msg_id)
+    status_link = tg_link(status_group, status_msg_id)
+
+    links_section = "\n\n📎 <b>関連</b>"
+    if ec_link or ship_link or status_link:
+        # EC通知に発送管理・ステータス管理へのリンクを追加
+        if ec_msg_id:
+            ec_links = ec_msg + "\n\n📎 <b>関連</b>"
+            if ship_link:
+                ec_links += f"\n→ <a href=\"{ship_link}\">発送管理</a>"
+            if status_link:
+                ec_links += f"\n→ <a href=\"{status_link}\">ステータス管理</a>"
+            edit_telegram_message(bot_token, ec_group, ec_msg_id, ec_links)
+            print(f"[CrossLink] EC message updated with links")
+
+        # 発送通知に購入通知・ステータス管理へのリンクを追加
+        if ship_msg_id:
+            ship_links = ship_msg + "\n\n📎 <b>関連</b>"
+            if ec_link:
+                ship_links += f"\n→ <a href=\"{ec_link}\">購入通知</a>"
+            if status_link:
+                ship_links += f"\n→ <a href=\"{status_link}\">ステータス管理</a>"
+            edit_telegram_message(bot_token, shipping_group, ship_msg_id, ship_links, reply_markup=ship_markup)
+            print(f"[CrossLink] Shipping message updated with links")
+
+        # ステータス通知に購入通知・発送管理へのリンクを追加
+        if status_msg_id and status_group:
+            stat_links = status_msg + "\n\n📎 <b>関連</b>"
+            if ec_link:
+                stat_links += f"\n→ <a href=\"{ec_link}\">購入通知</a>"
+            if ship_link:
+                stat_links += f"\n→ <a href=\"{ship_link}\">発送管理</a>"
+            edit_telegram_message(bot_token, status_group, status_msg_id, stat_links)
+            print(f"[CrossLink] Status message updated with links")
+
+    print(f"[CrossLink] All cross-links completed for order #{order_id}")
+    return True
 
 
 def send_discord_notification(order_data, design, webhook_url, order=None):
@@ -1866,24 +2061,14 @@ def process_order(order_id, config):
             design_id = design.get('id')
             print(f"[Canva] Design ID: {design_id}")
 
-            # Discord通知（注文情報+Canvaリンク統合版）
-            print(f"[Canva] Sending Discord notification...")
-            send_discord_notification(order_data, design, config['discord_webhook'], order)
-            print(f"[Canva] Discord notification sent")
+            # Discord通知は廃止（2026-01-31: Telegramに統一）
+            # send_discord_notification(order_data, design, config['discord_webhook'], order)
+            # send_shipping_notification(order_data, order, config.get('discord_bot_token', ''))
 
-            # 発送管理チャンネルへ住所情報通知
-            bot_token = config.get('discord_bot_token', '')
-            if bot_token:
-                print(f"[Canva] Sending shipping notification...")
-                send_shipping_notification(order_data, order, bot_token)
-            else:
-                print(f"[WARN] No bot token, skipping shipping notification")
-
-            # Telegram通知（EC管理 + 発送管理）
+            # Telegram通知（EC管理 + 発送管理 + ステータス管理 → 相互リンク）
             if config.get('telegram_bot_token'):
-                print(f"[Canva] Sending Telegram notifications...")
-                send_telegram_ec_notification(order_data, design, order, config)
-                send_telegram_shipping_notification(order_data, order, config)
+                print(f"[Canva] Sending Telegram notifications with cross-links...")
+                send_telegram_all_with_crosslinks(order_data, design, order, config)
                 print(f"[Canva] Telegram notifications sent")
             else:
                 print(f"[WARN] No Telegram bot token, skipping Telegram notifications")
@@ -1908,5 +2093,10 @@ def process_order(order_id, config):
         # 失敗時はロック解除 & エラー通知
         if lock_acquired and not success:
             clear_processing_lock(order_id, config['wc_url'], config['wc_key'], config['wc_secret'])
-            if error_message and config.get('discord_webhook'):
-                send_discord_error_notification(order_id, error_message, config['discord_webhook'])
+            if error_message:
+                # Telegramにエラー通知（管理者のみ、お客様には何も送らない）
+                if config.get('telegram_bot_token'):
+                    send_telegram_error_notification_tg(order_id, error_message, config)
+                # Discord通知（互換性のため残す）
+                if config.get('discord_webhook'):
+                    send_discord_error_notification(order_id, error_message, config['discord_webhook'])
