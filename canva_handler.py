@@ -401,11 +401,15 @@ def extract_board_info(product_name):
             size = f"{match.group(3)}_{match.group(4)}"
         return {'name': name, 'number': number.zfill(2), 'size': size}
 
-    # パターン3: "ケヤキ No.01"
+    # パターン3: "ケヤキ No.12 — 430 mm x 560 mm x 22 mm"
     match = re.search(r'^(.+?)\s*No\.?(\d+)', product_name)
     if match:
         name = match.group(1).strip()
         number = match.group(2)
+        # サイズ抽出: "430 mm x 560 mm" or "430x560"
+        size_match = re.search(r'(\d+)\s*(?:mm)?\s*x\s*(\d+)', product_name)
+        if size_match:
+            size = f"{size_match.group(1)}_{size_match.group(2)}"
         return {'name': name, 'number': number.zfill(2), 'size': size}
 
     return {'name': name, 'number': number, 'size': size}
