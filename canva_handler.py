@@ -662,6 +662,29 @@ def parse_order_data(order):
     if not wedding_date:
         wedding_date = sim_data.get('weddingDate', '')
 
+    # 両面加工データ
+    is_double_sided = meta.get('_back_engraving', '') == 'yes'
+    back_sim_data = {}
+    back_sim_image = ''
+    if is_double_sided:
+        back_sim_raw = meta.get('_back_simulation_data', '{}')
+        try:
+            back_sim_data = json.loads(back_sim_raw) if back_sim_raw else {}
+        except:
+            back_sim_data = {}
+        back_sim_image_url = meta.get('_back_simulation_image_url', '')
+        back_sim_image = back_sim_image_url if back_sim_image_url else meta.get('_back_simulation_image', '')
+
+        # 裏面もフォールバック（表面のデータを引き継ぐ）
+        if not back_sim_data.get('groomName'):
+            back_sim_data['groomName'] = sim_data.get('groomName', '')
+        if not back_sim_data.get('brideName'):
+            back_sim_data['brideName'] = sim_data.get('brideName', '')
+        if not back_sim_data.get('baseFont'):
+            back_sim_data['baseFont'] = sim_data.get('baseFont', '')
+        if not back_sim_data.get('weddingDate'):
+            back_sim_data['weddingDate'] = sim_data.get('weddingDate', '')
+
     return {
         'order_id': order['id'],
         'sim_data': sim_data,
@@ -671,12 +694,17 @@ def parse_order_data(order):
         'board_number': board_info['number'],
         'board_size': board_info['size'],
         'wedding_date': wedding_date,
+        'is_double_sided': is_double_sided,
+        'back_sim_data': back_sim_data,
+        'back_sim_image': back_sim_image,
     }
 
 
 def create_pptx(order_data, temp_dir):
-    """PowerPointを作成（6ページ構成）"""
-    print(f"[Canva] Creating PowerPoint for order #{order_data['order_id']}...")
+    """PowerPointを作成（片面6ページ / 両面8ページ構成）"""
+    is_double_sided = order_data.get('is_double_sided', False)
+    page_count = 8 if is_double_sided else 6
+    print(f"[Canva] Creating PowerPoint ({page_count}p, double={is_double_sided}) for order #{order_data['order_id']}...")
 
     sim_data = order_data['sim_data']
     sim_image = order_data['sim_image']
@@ -794,7 +822,74 @@ def create_pptx(order_data, temp_dir):
     add_text_box(slide1, f"{font_detail}　　本文: {template_info}",
                  SLIDE_WIDTH_PX/2, info_y, 'Meiryo UI', 11, center=True, color_rgb=(100, 100, 100))
 
-    # ========== 2ページ目: 背景cutout + テキスト ==========
+    # ========== 両面: 裏面シミュレーション画像ページ ==========
+    if is_double_sided:
+        back_sim_image = order_data.get('back_sim_image', '')
+        back_sim_data = order_data.get('back_sim_data', {})
+        slide_back_sim = prs.slides.add_slide(blank_layout)
+
+        if back_sim_image:
+            try:
+                temp_back_img_path = os.path.join(temp_dir, f"sim_back_{order_data['order_id']}.jpg")
+                if back_sim_image.startswith('http'):
+                    response = requests.get(back_sim_image, timeout=30)
+                    response.raise_for_status()
+                    img = Image.open(BytesIO(response.content))
+                else:
+                    if ',' in back_sim_image:
+                        back_sim_image = back_sim_image.split(',')[1]
+                    img_data = base64.b64decode(back_sim_image)
+                    img = Image.open(BytesIO(img_data))
+
+                if img.mode == 'RGBA':
+                    white_bg = Image.new('RGB', img.size, (255, 255, 255))
+                    white_bg.paste(img, mask=img.split()[3])
+                    img = white_bg
+                elif img.mode != 'RGB':
+                    img = img.convert('RGB')
+
+                max_size = 800
+                if max(img.size) > max_size:
+                    ratio = max_size / max(img.size)
+                    new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                    img = img.resize(new_size, Image.LANCZOS)
+
+                img.save(temp_back_img_path, 'JPEG', quality=80, optimize=True)
+                print(f"[IMG] Back sim image: {os.path.getsize(temp_back_img_path) / 1024:.1f}KB")
+
+                img = Image.open(temp_back_img_path)
+                img_width, img_height = img.size
+                available_height = SLIDE_HEIGHT_PX * 0.75
+                scale = min(SLIDE_WIDTH_PX * 0.95 / img_width, available_height / img_height)
+                draw_width = img_width * scale
+                draw_height = img_height * scale
+                x = (SLIDE_WIDTH_PX - draw_width) / 2
+                y = 20
+
+                slide_back_sim.shapes.add_picture(
+                    temp_back_img_path,
+                    px_to_emu(x), px_to_emu(y),
+                    px_to_emu(draw_width), px_to_emu(draw_height)
+                )
+            except Exception as e:
+                print(f"[WARN] Back simulation image error: {e}")
+
+        # 裏面の注文情報
+        back_info_y = SLIDE_HEIGHT_PX - 160
+        add_text_box(slide_back_sim, f"【裏面】注文 #{order_data['order_id']} - {order_data['board_name']} No.{order_data['board_number']}",
+                     SLIDE_WIDTH_PX/2, back_info_y, 'Meiryo UI', 16, center=True, color_rgb=(40, 40, 40))
+
+        back_info_y += 30
+        back_groom = back_sim_data.get('groomName', groom)
+        back_bride = back_sim_data.get('brideName', bride)
+        add_text_box(slide_back_sim, f"新郎: {back_groom}　　新婦: {back_bride}",
+                     SLIDE_WIDTH_PX/2, back_info_y, 'Meiryo UI', 13, center=True, color_rgb=(60, 60, 60))
+
+        back_info_y += 26
+        add_text_box(slide_back_sim, f"挙式日: {order_data['wedding_date']}",
+                     SLIDE_WIDTH_PX/2, back_info_y, 'Meiryo UI', 13, center=True, color_rgb=(60, 60, 60))
+
+    # ========== 編集データページ（表面）: 背景cutout + テキスト ==========
     slide2 = prs.slides.add_slide(blank_layout)
 
     base_font = sim_data.get('baseFont', 'Alex Brush')
@@ -1038,7 +1133,189 @@ def create_pptx(order_data, temp_dir):
             import traceback
             traceback.print_exc()
 
-    # ========== 3-6ページ目: cutout画像 ==========
+    # ========== 両面: 裏面編集データページ ==========
+    if is_double_sided:
+        back_sim_data = order_data.get('back_sim_data', {})
+        slide_back_edit = prs.slides.add_slide(blank_layout)
+
+        # 裏面のbackground key（表がproductなら裏はproduct_back）
+        back_bg_key = background + '_back' if not background.endswith('_back') else background
+        back_base_font = back_sim_data.get('baseFont', '') or sim_data.get('baseFont', 'Alex Brush')
+        if back_base_font not in FONT_MAP:
+            back_base_font = 'Alex Brush'
+
+        def get_back_element_font(element):
+            font_key = element + 'Font'
+            font = back_sim_data.get(font_key) or back_base_font
+            if font not in FONT_MAP:
+                font = back_base_font
+            return font
+
+        BACK_FONT_SCALE = SLIDE_WIDTH_PX / 500
+        back_board_size_pct = back_sim_data.get('boardSize', sim_data.get('boardSize', 130)) / 100
+        back_text_color_name = back_sim_data.get('textColor', sim_data.get('textColor', 'burn'))
+        back_text_color = (255, 255, 255) if back_text_color_name == 'white' else (42, 24, 16)
+
+        # 裏面cutout画像ダウンロード
+        back_cutout_path = download_image(cutout_urls.get(back_bg_key, cutout_urls.get('product_back', '')), temp_dir, preserve_transparency=True)
+
+        back_actual_board_left = 0
+        back_actual_board_top = 0
+        back_actual_board_width = SLIDE_WIDTH_PX
+        back_actual_board_height = SLIDE_HEIGHT_PX
+
+        if back_cutout_path and os.path.exists(back_cutout_path):
+            try:
+                bg_img = Image.open(back_cutout_path)
+                bg_width, bg_height = bg_img.size
+
+                back_board_shape = detect_board_shape(bg_img)
+                back_bounds = back_board_shape.get('bounds', {'minX': 0, 'maxX': 1, 'minY': 0, 'maxY': 1})
+
+                base_scale = 1.1
+                img_ratio = bg_width / bg_height
+                max_width = SLIDE_WIDTH_PX * base_scale
+                max_height = SIMULATOR_ASPECT_HEIGHT * base_scale
+
+                if bg_width / max_width > bg_height / max_height:
+                    base_width = max_width
+                    base_height = max_width / img_ratio
+                else:
+                    base_height = max_height
+                    base_width = max_height * img_ratio
+
+                draw_width = base_width * back_board_size_pct
+                draw_height = base_height * back_board_size_pct
+                board_x_pct = back_sim_data.get('boardX', sim_data.get('boardX', 0.5))
+                board_y_pct = back_sim_data.get('boardY', sim_data.get('boardY', 0.5))
+                img_x = SLIDE_WIDTH_PX * board_x_pct - draw_width / 2
+                img_y = Y_OFFSET + board_y_pct * SIMULATOR_ASPECT_HEIGHT - draw_height / 2
+
+                back_actual_board_left = img_x + draw_width * back_bounds['minX']
+                back_actual_board_top = img_y + draw_height * back_bounds['minY']
+                back_actual_board_width = draw_width * (back_bounds['maxX'] - back_bounds['minX'])
+                back_actual_board_height = draw_height * (back_bounds['maxY'] - back_bounds['minY'])
+
+                print(f"[Back Board] Image: ({img_x:.0f}, {img_y:.0f}) {draw_width:.0f}x{draw_height:.0f}")
+
+                slide_back_edit.shapes.add_picture(
+                    back_cutout_path,
+                    px_to_emu(img_x), px_to_emu(img_y),
+                    px_to_emu(draw_width), px_to_emu(draw_height)
+                )
+            except Exception as e:
+                print(f"[WARN] Back background image error: {e}")
+
+        # 裏面テキスト配置（back_sim_data優先、なければ表面のsim_dataをフォールバック）
+        def back_val(key, default):
+            v = back_sim_data.get(key)
+            if v is not None:
+                return v
+            v = sim_data.get(key)
+            if v is not None:
+                return v
+            return default
+
+        # タイトル
+        back_title_font = get_back_element_font('title')
+        back_title_key = back_val('title', 'wedding')
+        back_title_text = back_sim_data.get('customTitle', '') if back_title_key == 'custom' else TITLES.get(back_title_key, 'Wedding Certificate')
+        back_title_x = back_actual_board_left + back_actual_board_width * (back_val('titleX', 50) / 100)
+        back_title_y = back_actual_board_top + back_actual_board_height * (back_val('titleY', 22) / 100)
+        back_title_size = 24 * (back_val('titleSize', 100) / 100) * BACK_FONT_SCALE
+        add_text_box(slide_back_edit, back_title_text, back_title_x, back_title_y, back_title_font, back_title_size, center=True, color_rgb=back_text_color)
+        back_title_bottom = back_title_y + back_title_size
+
+        # 本文
+        back_body_font = get_back_element_font('body')
+        back_template_key = back_val('template', 'holy')
+        back_body_text = back_sim_data.get('customText', '') if back_template_key == 'custom' else TEMPLATES.get(back_template_key, '')
+        back_body_x = back_actual_board_left + back_actual_board_width * (back_val('bodyX', 50) / 100)
+        back_body_y_base = back_actual_board_top + back_actual_board_height * (back_val('bodyY', 32) / 100)
+        back_min_gap = 30 * BACK_FONT_SCALE
+        back_body_y = max(back_body_y_base, back_title_bottom + back_min_gap)
+        back_body_size = 11 * (back_val('bodySize', 115) / 100) * BACK_FONT_SCALE
+        back_body_line_height = back_val('bodyLineHeight', 1.4)
+        if back_body_text:
+            add_multiline_text_box(slide_back_edit, back_body_text, back_body_x, back_body_y, back_body_font, back_body_size,
+                                   line_height=back_body_line_height, color_rgb=back_text_color)
+
+        # 日付
+        back_date_font = get_back_element_font('date')
+        back_date_format = back_val('dateFormat', 'western')
+        back_formatted_date = back_sim_data.get('customDate', '') if back_date_format == 'custom' else format_date(order_data['wedding_date'], back_date_format)
+        back_date_x = back_actual_board_left + back_actual_board_width * (back_val('dateX', 50) / 100)
+        back_date_y = back_actual_board_top + back_actual_board_height * (back_val('dateY', 60) / 100)
+        back_date_size = 18 * (back_val('dateSize', 85) / 100) * BACK_FONT_SCALE
+        if back_formatted_date:
+            add_text_box(slide_back_edit, back_formatted_date, back_date_x, back_date_y, back_date_font, back_date_size, center=True, color_rgb=back_text_color)
+
+        # 名前
+        back_name_font = get_back_element_font('name')
+        back_name_x_pct = back_val('nameX', 50) / 100
+        back_name_size = 32 * (back_val('nameSize', 90) / 100) * BACK_FONT_SCALE
+        back_name_center_x = back_actual_board_left + back_actual_board_width * back_name_x_pct
+        back_name_y = back_actual_board_top + back_actual_board_height * (back_val('nameY', 74) / 100)
+        back_groom = back_sim_data.get('groomName', groom)
+        back_bride = back_sim_data.get('brideName', bride)
+
+        groom_w = len(back_groom) * back_name_size * 0.6
+        amp_w = back_name_size * 2
+        bride_w = len(back_bride) * back_name_size * 0.6
+        total_w = groom_w + amp_w + bride_w
+
+        if back_groom:
+            add_text_box(slide_back_edit, back_groom, back_name_center_x - total_w / 2 + groom_w / 2, back_name_y, back_name_font, back_name_size, center=True, color_rgb=back_text_color)
+        add_text_box(slide_back_edit, "&", back_name_center_x, back_name_y, back_name_font, back_name_size, center=True, color_rgb=back_text_color)
+        if back_bride:
+            add_text_box(slide_back_edit, back_bride, back_name_center_x + total_w / 2 - bride_w / 2, back_name_y, back_name_font, back_name_size, center=True, color_rgb=back_text_color)
+
+        # 裏面ツリー
+        if back_sim_data.get('showTree', sim_data.get('showTree', False)):
+            back_tree_type = back_sim_data.get('treeType', sim_data.get('treeType', 'simple'))
+            back_tree_x_pct = back_sim_data.get('treeX') if back_sim_data.get('treeX') is not None else sim_data.get('treeX', 0.75)
+            back_tree_y_pct = back_sim_data.get('treeY') if back_sim_data.get('treeY') is not None else sim_data.get('treeY', 0.65)
+            back_tree_size_pct = (back_sim_data.get('treeSize') if back_sim_data.get('treeSize') is not None else sim_data.get('treeSize', 80)) / 100
+
+            back_tree_url = f"{TREE_IMAGES_URL}/tree-{back_tree_type}.png"
+            print(f"[TREE-BACK] Downloading: {back_tree_url}")
+            try:
+                response = requests.get(back_tree_url, timeout=30)
+                if response.status_code == 200:
+                    tree_img = Image.open(BytesIO(response.content))
+                    max_size = 800
+                    if max(tree_img.size) > max_size:
+                        ratio = max_size / max(tree_img.size)
+                        new_size = (int(tree_img.size[0] * ratio), int(tree_img.size[1] * ratio))
+                        tree_img = tree_img.resize(new_size, Image.LANCZOS)
+                    if tree_img.mode != 'RGBA':
+                        tree_img = tree_img.convert('RGBA')
+
+                    tree_buffer = BytesIO()
+                    tree_img.save(tree_buffer, 'PNG', optimize=False)
+                    tree_buffer.seek(0)
+
+                    tree_width, tree_height = tree_img.size
+                    TREE_ORIGINAL_SIZE = 3000
+                    TREE_SCALE_FACTOR = 0.08
+                    SIMULATOR_WIDTH = 500
+                    draw_tree_width = TREE_ORIGINAL_SIZE * back_tree_size_pct * TREE_SCALE_FACTOR * (SLIDE_WIDTH_PX / SIMULATOR_WIDTH)
+                    draw_tree_height = draw_tree_width * (tree_height / tree_width)
+                    tree_x = back_actual_board_left + back_actual_board_width * back_tree_x_pct - draw_tree_width / 2
+                    tree_y = back_actual_board_top + back_actual_board_height * back_tree_y_pct - draw_tree_height / 2
+
+                    slide_back_edit.shapes.add_picture(
+                        tree_buffer,
+                        px_to_emu(tree_x), px_to_emu(tree_y),
+                        px_to_emu(draw_tree_width), px_to_emu(draw_tree_height)
+                    )
+                    print(f"[TREE-BACK] Added at ({tree_x:.0f}, {tree_y:.0f})")
+            except Exception as e:
+                print(f"[WARN] Back tree image error: {e}")
+
+        print(f"[Canva] Back edit page added")
+
+    # ========== cutout画像ページ ==========
     cutout_labels = [
         ('product', '水引表'),
         ('product_back', '水引裏'),
