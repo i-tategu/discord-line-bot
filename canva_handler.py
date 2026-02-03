@@ -417,6 +417,8 @@ def extract_board_info(product_name):
 
 def find_cutout_url(board_name, board_number, board_size, background='product'):
     """cutout画像のURLを構築"""
+    from urllib.parse import quote
+
     suffix = BACKGROUND_MAP.get(background, '_1_cutout.png')
 
     # サイズありの場合
@@ -425,7 +427,7 @@ def find_cutout_url(board_name, board_number, board_size, background='product'):
     else:
         filename = f"{board_name}_{board_number}_300_300{suffix}"  # デフォルトサイズ
 
-    return f"{CUTOUT_BASE_URL}/{filename}"
+    return f"{CUTOUT_BASE_URL}/{quote(filename)}"
 
 
 def download_image(url, temp_dir, max_size=800, preserve_transparency=False):
@@ -435,7 +437,10 @@ def download_image(url, temp_dir, max_size=800, preserve_transparency=False):
         preserve_transparency: Trueの場合、PNG形式で透明度を保持
     """
     try:
+        print(f"[IMG] Downloading: {url}")
         response = requests.get(url, timeout=30)
+        if response.status_code != 200:
+            print(f"[WARN] HTTP {response.status_code} for: {url}")
         if response.status_code == 200:
             # 画像を開いてリサイズ・圧縮
             img = Image.open(BytesIO(response.content))
