@@ -157,8 +157,10 @@ def get_line_user_id_from_thread(thread_id):
     return None
 
 
-# テンプレート
-TEMPLATES_FILE = os.path.join(os.path.dirname(__file__), "line_templates.json")
+# テンプレート（DATA_DIRに保存版があればそちらを優先）
+_TEMPLATES_BUNDLED = os.path.join(os.path.dirname(__file__), "line_templates.json")
+_DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(__file__))
+_TEMPLATES_SAVED = os.path.join(_DATA_DIR, "line_templates.json")
 
 # テンプレートボタンメッセージID追跡（スレッドID → メッセージID）
 _template_button_msg_ids = {}
@@ -166,12 +168,19 @@ _posting_buttons_lock = set()  # 再投稿ループ防止
 
 
 def load_templates():
-    """LINEテンプレートを読み込み"""
-    if os.path.exists(TEMPLATES_FILE):
-        with open(TEMPLATES_FILE, 'r', encoding='utf-8') as f:
+    """LINEテンプレートを読み込み（DATA_DIR優先）"""
+    path = _TEMPLATES_SAVED if os.path.exists(_TEMPLATES_SAVED) else _TEMPLATES_BUNDLED
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
             return data.get("templates", [])
     return []
+
+
+def save_templates(templates):
+    """テンプレートをDATA_DIRに保存"""
+    with open(_TEMPLATES_SAVED, 'w', encoding='utf-8') as f:
+        json.dump({"templates": templates}, f, ensure_ascii=False, indent=2)
 
 
 def get_thread_customer_info(thread):
@@ -960,6 +969,111 @@ class TemplatePersistentView(discord.ui.View):
     @discord.ui.button(label="⑦ お礼②", style=discord.ButtonStyle.secondary, custom_id="tpl_thanks_2", emoji="💐", row=1)
     async def btn_thanks_2(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._handle_button(interaction, "thanks_2")
+
+    @discord.ui.button(label="テンプレ編集", style=discord.ButtonStyle.secondary, custom_id="tpl_manage", emoji="✏️", row=2)
+    async def btn_manage(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """テンプレート管理メニュー"""
+        templates = load_templates()
+        options = []
+        for t in templates:
+            options.append(discord.SelectOption(
+                label=f"{t['emoji']} {t['label']}",
+                value=t["id"],
+                description="編集"
+            ))
+        options.append(discord.SelectOption(
+            label="＋ 新規テンプレート追加",
+            value="__new__",
+            emoji="➕"
+        ))
+
+        view = discord.ui.View(timeout=120)
+        select = TemplateManageSelect(options)
+        view.add_item(select)
+        await interaction.response.send_message("編集するテンプレートを選択:", view=view, ephemeral=True)
+
+
+class TemplateManageSelect(discord.ui.Select):
+    """テンプレート管理用セレクトメニュー"""
+    def __init__(self, options):
+        super().__init__(placeholder="テンプレートを選択...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        selected = self.values[0]
+
+        if selected == "__new__":
+            modal = TemplateManageModal(template_id=None, label="", text="", is_new=True)
+            await interaction.response.send_modal(modal)
+        else:
+            templates = load_templates()
+            template = next((t for t in templates if t["id"] == selected), None)
+            if not template:
+                await interaction.response.send_message("テンプレートが見つかりません", ephemeral=True)
+                return
+            modal = TemplateManageModal(
+                template_id=template["id"],
+                label=template["label"],
+                text=template["text"],
+                is_new=False
+            )
+            await interaction.response.send_modal(modal)
+
+
+class TemplateManageModal(discord.ui.Modal):
+    """テンプレート編集・追加モーダル"""
+    def __init__(self, template_id, label, text, is_new=False):
+        self.template_id = template_id
+        self.is_new = is_new
+        super().__init__(title="テンプレート追加" if is_new else "テンプレート編集")
+
+        self.label_input = discord.ui.TextInput(
+            label="テンプレート名",
+            style=discord.TextStyle.short,
+            default=label,
+            placeholder="例: ① 初回あいさつ",
+            max_length=50,
+            required=True,
+        )
+        self.add_item(self.label_input)
+
+        self.text_input = discord.ui.TextInput(
+            label="メッセージ本文（{name}で顧客名に置換）",
+            style=discord.TextStyle.long,
+            default=text,
+            placeholder="{name}様\n\nメッセージ内容...",
+            max_length=2000,
+            required=True,
+        )
+        self.add_item(self.text_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        templates = load_templates()
+
+        if self.is_new:
+            new_id = f"custom_{len(templates) + 1}"
+            templates.append({
+                "id": new_id,
+                "label": self.label_input.value,
+                "emoji": "💬",
+                "status_action": None,
+                "text": self.text_input.value,
+            })
+            save_templates(templates)
+            await interaction.response.send_message(
+                f"✅ テンプレート「{self.label_input.value}」を追加しました",
+                ephemeral=True
+            )
+        else:
+            for t in templates:
+                if t["id"] == self.template_id:
+                    t["label"] = self.label_input.value
+                    t["text"] = self.text_input.value
+                    break
+            save_templates(templates)
+            await interaction.response.send_message(
+                f"✅ テンプレート「{self.label_input.value}」を更新しました",
+                ephemeral=True
+            )
 
 
 async def post_template_buttons(thread):
