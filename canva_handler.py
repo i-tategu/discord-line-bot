@@ -1704,381 +1704,19 @@ def create_pdf(order_data, temp_dir):
     return output_path
 
 
-def send_telegram_message(bot_token, chat_id, text, parse_mode='HTML', reply_markup=None, thread_id=None, silent=False):
-    """Telegram Bot API でメッセージ送信"""
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {
-        'chat_id': chat_id,
-        'text': text,
-        'parse_mode': parse_mode,
-    }
-    if reply_markup:
-        payload['reply_markup'] = json.dumps(reply_markup)
-    if thread_id:
-        payload['message_thread_id'] = thread_id
-    if silent:
-        payload['disable_notification'] = True
-    try:
-        resp = requests.post(url, json=payload)
-        if resp.status_code == 200:
-            return resp.json()
-        else:
-            print(f"[Telegram] Failed: {resp.status_code} - {resp.text}")
-            return None
-    except Exception as e:
-        print(f"[Telegram] Error: {e}")
+# Telegram関連コード削除済み（2026-02-05: Discord + 管理者LINE通知に完全移行）
+
+
+def send_discord_notification(order_data, design, bot_token, order=None):
+    """Discord #注文通知 に投稿（Bot API版 - サイレント + メッセージID返却）"""
+    channel_id = os.environ.get("DISCORD_PURCHASE_NOTIFY_CHANNEL", "1462313247096045743")
+    if not bot_token:
         return None
-
-
-def edit_telegram_message(bot_token, chat_id, message_id, text, parse_mode='HTML', reply_markup=None):
-    """Telegram Bot API でメッセージを編集"""
-    url = f"https://api.telegram.org/bot{bot_token}/editMessageText"
-    payload = {
-        'chat_id': chat_id,
-        'message_id': message_id,
-        'text': text,
-        'parse_mode': parse_mode,
-    }
-    if reply_markup:
-        payload['reply_markup'] = json.dumps(reply_markup)
-    try:
-        resp = requests.post(url, json=payload)
-        if resp.status_code == 200:
-            return resp.json()
-        else:
-            print(f"[Telegram] Edit failed: {resp.status_code} - {resp.text}")
-            return None
-    except Exception as e:
-        print(f"[Telegram] Edit error: {e}")
-        return None
-
-
-def send_telegram_error_notification_tg(order_id, error_message, config):
-    """Canvaエラー時にTelegram EC管理グループへエラー通知（管理者向けのみ）"""
-    bot_token = config.get('telegram_bot_token', '')
-    ec_group = config.get('telegram_status_group', '')
-    if not bot_token or not ec_group:
-        return
-    msg = f"⚠️ <b>Canva処理エラー #{order_id}</b>\n\n"
-    msg += f"❌ {error_message}\n\n"
-    msg += "手動で対応してください。"
-    send_telegram_message(bot_token, ec_group, msg)
-    print(f"[Telegram] Error notification sent for order #{order_id}")
-
-
-def get_telegram_topic_id(order_id, config):
-    """WP REST APIからステータストピックIDを取得"""
-    wp_url = config.get('wp_url', 'https://i-tategu-shop.com')
-    token = 'itg_ship_2026'
-    try:
-        resp = requests.get(
-            f"{wp_url}/wp-json/i-tategu/v1/status-topic/{order_id}?token={token}",
-            timeout=10
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            topic_id = data.get('topic_id')
-            if topic_id:
-                print(f"[Telegram] Got topic_id={topic_id} for order #{order_id}")
-                return topic_id
-            else:
-                print(f"[Telegram] No topic_id found for order #{order_id}")
-        else:
-            print(f"[Telegram] Failed to get topic_id: {resp.status_code}")
-    except Exception as e:
-        print(f"[Telegram] Error getting topic_id: {e}")
-    return None
-
-
-def create_telegram_topic(bot_token, chat_id, name):
-    """Telegram Bot APIでフォーラムトピックを直接作成（フォールバック用）"""
-    url = f"https://api.telegram.org/bot{bot_token}/createForumTopic"
-    payload = {
-        'chat_id': chat_id,
-        'name': name,
-    }
-    try:
-        resp = requests.post(url, json=payload, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            topic_id = data.get('result', {}).get('message_thread_id')
-            print(f"[Telegram] Created topic '{name}' with id={topic_id}")
-            return topic_id
-        else:
-            print(f"[Telegram] Failed to create topic: {resp.status_code} - {resp.text}")
-    except Exception as e:
-        print(f"[Telegram] Error creating topic: {e}")
-    return None
-
-
-def send_telegram_ec_notification(order_data, design, order, config):
-    """Telegram EC管理グループに通知 + ステータス管理「購入済み」トピックにも送信"""
-    bot_token = config.get('telegram_bot_token', '')
-    ec_group = config.get('telegram_status_group', '')  # EC管理グループ
-    status_group = config.get('telegram_status_mgmt_group', '')  # ステータス管理グループ
-    if not bot_token or not ec_group:
-        print("[Telegram] Missing bot_token or EC group ID")
-        return False
-
-    edit_url = design.get("urls", {}).get("edit_url", "")
-
-    billing = order.get('billing', {}) if order else {}
-    customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
-    order_total = order.get('total', '0') if order else '0'
-    payment_method = order.get('payment_method_title', '') if order else ''
-    customer_phone = billing.get('phone', '')
-    customer_email = billing.get('email', '')
-
-    products = []
-    for item in order.get('line_items', []):
-        products.append(item.get('name', ''))
-    product_names = ', '.join(products) if products else f"{order_data['board_name']} No.{order_data['board_number']}"
-
-    msg = f"🛒 <b>#{order_data['order_id']}</b>\n\n"
-    msg += f"👤 {customer_name}\n"
-    msg += f"💰 ¥{int(float(order_total)):,} / {payment_method}\n"
-    msg += f"📦 {order_data['board_name']} No.{order_data['board_number']}\n"
-    msg += f"   {product_names}\n"
-    msg += f"📅 挙式日: {order_data['wedding_date']}\n\n"
-    msg += f"📞 {customer_phone}\n"
-    msg += f"📧 {customer_email}\n\n"
-    msg += f"🎨 <a href=\"{edit_url}\">Canvaデザインを開く</a>"
-
-    # 1. EC管理グループの個別トピックに送信
-    topic_id = get_telegram_topic_id(order_data['order_id'], config)
-    result = send_telegram_message(bot_token, ec_group, msg, thread_id=topic_id)
-    if result:
-        print(f"[Telegram] EC notification sent for order #{order_data['order_id']} (topic={topic_id})")
-
-    # 2. ステータス管理グループの「購入済み」トピック(thread_id=7)に送信
-    if status_group:
-        status_msg = f"💳 <b>購入済み #{order_data['order_id']}</b>\n\n"
-        status_msg += f"👤 {customer_name}\n"
-        status_msg += f"📦 {product_names}\n"
-        status_msg += f"💰 ¥{int(float(order_total)):,}"
-        send_telegram_message(bot_token, status_group, status_msg, thread_id=7)
-        print(f"[Telegram] Status mgmt (購入済み) sent for order #{order_data['order_id']}")
-
-    return bool(result)
-
-
-def send_telegram_shipping_notification(order_data, order, config):
-    """Telegram 発送管理グループに通知: 名前、注文番号、板名、ボタン3つ"""
-    bot_token = config.get('telegram_bot_token', '')
-    chat_id = config.get('telegram_shipping_group', '')
-    if not bot_token or not chat_id:
-        print("[Telegram] Missing bot_token or shipping group ID")
-        return False
-
-    billing = order.get('billing', {}) if order else {}
-    customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
-
-    products = []
-    for item in order.get('line_items', []):
-        products.append(item.get('name', ''))
-    product_names = ', '.join(products) if products else f"{order_data['board_name']} No.{order_data['board_number']}"
-
-    order_id = order_data['order_id']
-
-    msg = f"📦 <b>発送準備 #{order_id}</b>\n\n"
-    msg += f"👤 {customer_name} 様\n"
-    msg += f"📦 {order_data['board_name']} No.{order_data['board_number']}\n"
-    msg += f"   {product_names}"
-
-    yamato_url = 'https://bmypage.kuronekoyamato.co.jp/bmypage/servlet/jp.co.kuronekoyamato.wur.hmp.servlet.user.HMPLGI0010JspServlet'
-
-    reply_markup = {
-        'inline_keyboard': [
-            [
-                {'text': '🚚 ヤマトB2ログイン', 'url': yamato_url},
-                {'text': '📝 B2自動入力', 'callback_data': f'b2_{order_id}'},
-            ],
-            [
-                {'text': '✅ 発送完了', 'callback_data': f'shipped_{order_id}'},
-            ],
-        ]
-    }
-
-    result = send_telegram_message(bot_token, chat_id, msg, reply_markup=reply_markup)
-    if result:
-        print(f"[Telegram] Shipping notification sent for order #{order_data['order_id']}")
-    return result
-
-
-def send_telegram_all_with_crosslinks(order_data, design, order, config):
-    """
-    3グループにTelegram通知 → 相互リンクで編集
-    1. EC管理（購入通知）
-    2. 発送管理（ヤマトボタン付き）
-    3. ステータス管理（購入済みトピック）
-    送信後に各メッセージを編集して相互リンクを追加
-    """
-    bot_token = config.get('telegram_bot_token', '')
-    ec_group = config.get('telegram_status_group', '')
-    shipping_group = config.get('telegram_shipping_group', '')
-    status_group = config.get('telegram_status_mgmt_group', '')
-
-    order_id = order_data['order_id']
-    billing = order.get('billing', {}) if order else {}
-    customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
-    edit_url = design.get("urls", {}).get("edit_url", "")
-    order_total = order.get('total', '0') if order else '0'
-    payment_method = order.get('payment_method_title', '') if order else ''
-    customer_phone = billing.get('phone', '')
-    customer_email = billing.get('email', '')
-
-    products = []
-    for item in order.get('line_items', []):
-        products.append(item.get('name', ''))
-    product_names = ', '.join(products) if products else f"{order_data['board_name']} No.{order_data['board_number']}"
-
-    # ---- 1. EC管理グループへ購入通知 ----
-    ec_msg = f"🛒 <b>#{order_id}</b>\n\n"
-    ec_msg += f"👤 {customer_name}\n"
-    ec_msg += f"💰 ¥{int(float(order_total)):,} / {payment_method}\n"
-    ec_msg += f"📦 {order_data['board_name']} No.{order_data['board_number']}\n"
-    ec_msg += f"   {product_names}\n"
-    ec_msg += f"📅 挙式日: {order_data['wedding_date']}\n\n"
-    ec_msg += f"📞 {customer_phone}\n"
-    ec_msg += f"📧 {customer_email}\n\n"
-    ec_msg += f"🎨 <a href=\"{edit_url}\">Canvaデザインを開く</a>"
-
-    topic_id = get_telegram_topic_id(order_id, config)
-    if not topic_id and ec_group:
-        # フォールバック: WP REST APIでトピックが見つからない場合、Telegram APIで直接作成
-        topic_name = f"#{order_id} {customer_name} 様"
-        topic_id = create_telegram_topic(bot_token, ec_group, topic_name)
-        print(f"[Telegram] Fallback topic creation: topic_id={topic_id}")
-    ec_result = send_telegram_message(bot_token, ec_group, ec_msg, thread_id=topic_id)
-    ec_msg_id = ec_result.get('result', {}).get('message_id') if ec_result else None
-    print(f"[CrossLink] EC msg_id={ec_msg_id}")
-
-    # ---- 2. 発送管理グループへ発送準備通知 ----
-    shipping = order.get('shipping', {}) if order else {}
-    postcode = shipping.get('postcode') or billing.get('postcode', '')
-    state = shipping.get('state') or billing.get('state', '')
-    city = shipping.get('city') or billing.get('city', '')
-    address1 = shipping.get('address_1') or billing.get('address_1', '')
-    address2 = shipping.get('address_2') or billing.get('address_2', '')
-
-    JP_STATES = {
-        'JP01': '北海道', 'JP02': '青森県', 'JP03': '岩手県', 'JP04': '宮城県',
-        'JP05': '秋田県', 'JP06': '山形県', 'JP07': '福島県', 'JP08': '茨城県',
-        'JP09': '栃木県', 'JP10': '群馬県', 'JP11': '埼玉県', 'JP12': '千葉県',
-        'JP13': '東京都', 'JP14': '神奈川県', 'JP15': '新潟県', 'JP16': '富山県',
-        'JP17': '石川県', 'JP18': '福井県', 'JP19': '山梨県', 'JP20': '長野県',
-        'JP21': '岐阜県', 'JP22': '静岡県', 'JP23': '愛知県', 'JP24': '三重県',
-        'JP25': '滋賀県', 'JP26': '京都府', 'JP27': '大阪府', 'JP28': '兵庫県',
-        'JP29': '奈良県', 'JP30': '和歌山県', 'JP31': '鳥取県', 'JP32': '島根県',
-        'JP33': '岡山県', 'JP34': '広島県', 'JP35': '山口県', 'JP36': '徳島県',
-        'JP37': '香川県', 'JP38': '愛媛県', 'JP39': '高知県', 'JP40': '福岡県',
-        'JP41': '佐賀県', 'JP42': '長崎県', 'JP43': '熊本県', 'JP44': '大分県',
-        'JP45': '宮崎県', 'JP46': '鹿児島県', 'JP47': '沖縄県'
-    }
-    state_name = JP_STATES.get(state, state)
-    full_address = f"{state_name}{city}{address1}"
-    if address2:
-        full_address += f" {address2}"
-
-    ship_msg = f"📦 <b>#{order_id}</b>\n\n"
-    ship_msg += f"👤 {customer_name} 様\n"
-    ship_msg += f"📦 {order_data['board_name']} No.{order_data['board_number']}\n"
-    ship_msg += f"   {product_names}\n\n"
-    ship_msg += f"📮 〒{postcode}\n"
-    ship_msg += f"📍 {full_address}\n"
-    ship_msg += f"📞 {customer_phone}"
-
-    yamato_url = 'https://bmypage.kuronekoyamato.co.jp/bmypage/servlet/jp.co.kuronekoyamato.wur.hmp.servlet.user.HMPLGI0010JspServlet'
-    ship_markup = {
-        'inline_keyboard': [
-            [
-                {'text': '🚚 ヤマトサイトを開く', 'url': yamato_url},
-                {'text': '📝 ヤマト自動入力', 'callback_data': f'b2_{order_id}'},
-            ],
-            [
-                {'text': '✅ 発送完了', 'callback_data': f'shipped_{order_id}'},
-            ],
-        ]
-    }
-
-    ship_result = send_telegram_message(bot_token, shipping_group, ship_msg, reply_markup=ship_markup, silent=True)
-    ship_msg_id = ship_result.get('result', {}).get('message_id') if ship_result else None
-    print(f"[CrossLink] Shipping msg_id={ship_msg_id}")
-
-    # ---- 3. ステータス管理「購入済み」トピック(thread_id=7) ----
-    status_msg = f"💳 <b>#{order_id}</b>\n\n"
-    status_msg += f"👤 {customer_name}\n"
-    status_msg += f"📦 {product_names}\n"
-    status_msg += f"💰 ¥{int(float(order_total)):,}"
-
-    status_result = None
-    status_msg_id = None
-    if status_group:
-        status_result = send_telegram_message(bot_token, status_group, status_msg, thread_id=7, silent=True)
-        status_msg_id = status_result.get('result', {}).get('message_id') if status_result else None
-        print(f"[CrossLink] Status msg_id={status_msg_id}")
-
-    # ---- 4. 相互リンクで各メッセージを編集 ----
-    def tg_link(chat_id, msg_id):
-        """Telegram メッセージへのディープリンク生成"""
-        if not msg_id:
-            return None
-        # スーパーグループのIDは -100 prefix を除去して使う
-        cid = str(chat_id)
-        if cid.startswith('-100'):
-            cid = cid[4:]
-        return f"https://t.me/c/{cid}/{msg_id}"
-
-    ec_link = tg_link(ec_group, ec_msg_id)
-    ship_link = tg_link(shipping_group, ship_msg_id)
-    status_link = tg_link(status_group, status_msg_id)
-
-    links_section = "\n\n📎 <b>関連</b>"
-    if ec_link or ship_link or status_link:
-        # EC通知に発送管理・ステータス管理へのリンクを追加
-        if ec_msg_id:
-            ec_links = ec_msg + "\n\n📎 <b>関連</b>"
-            if ship_link:
-                ec_links += f"\n→ <a href=\"{ship_link}\">発送管理</a>"
-            if status_link:
-                ec_links += f"\n→ <a href=\"{status_link}\">ステータス管理</a>"
-            edit_telegram_message(bot_token, ec_group, ec_msg_id, ec_links)
-            print(f"[CrossLink] EC message updated with links")
-
-        # 発送通知に購入通知・ステータス管理へのリンクを追加
-        if ship_msg_id:
-            ship_links = ship_msg + "\n\n📎 <b>関連</b>"
-            if ec_link:
-                ship_links += f"\n→ <a href=\"{ec_link}\">購入通知</a>"
-            if status_link:
-                ship_links += f"\n→ <a href=\"{status_link}\">ステータス管理</a>"
-            edit_telegram_message(bot_token, shipping_group, ship_msg_id, ship_links, reply_markup=ship_markup)
-            print(f"[CrossLink] Shipping message updated with links")
-
-        # ステータス通知に購入通知・発送管理へのリンクを追加
-        if status_msg_id and status_group:
-            stat_links = status_msg + "\n\n📎 <b>関連</b>"
-            if ec_link:
-                stat_links += f"\n→ <a href=\"{ec_link}\">購入通知</a>"
-            if ship_link:
-                stat_links += f"\n→ <a href=\"{ship_link}\">発送管理</a>"
-            edit_telegram_message(bot_token, status_group, status_msg_id, stat_links)
-            print(f"[CrossLink] Status message updated with links")
-
-    print(f"[CrossLink] All cross-links completed for order #{order_id}")
-    return True
-
-
-def send_discord_notification(order_data, design, webhook_url, order=None):
-    """Discord通知送信（新規注文 + Canvaリンク統合版）"""
-    if not webhook_url:
-        return False
 
     edit_url = design.get("urls", {}).get("edit_url", "")
     groom = order_data['sim_data'].get('groomName', '')
     bride = order_data['sim_data'].get('brideName', '')
 
-    # 注文情報を取得（orderオブジェクトがある場合）
     customer_name = ""
     order_total = ""
     payment_method = ""
@@ -2095,7 +1733,7 @@ def send_discord_notification(order_data, design, webhook_url, order=None):
 
     embed = {
         "title": f"🛒 新規注文 #{order_data['order_id']}",
-        "color": 0x06C755,  # LINE緑
+        "color": 0x06C755,
         "fields": [
             {"name": "👤 お客様", "value": customer_name or f"{groom} & {bride}", "inline": True},
             {"name": "💰 金額", "value": f"¥{int(float(order_total)):,}" if order_total else "N/A", "inline": True},
@@ -2108,7 +1746,6 @@ def send_discord_notification(order_data, design, webhook_url, order=None):
         "footer": {"text": "i.tategu 自動化システム（Railway）"},
     }
 
-    # 商品画像があればサムネイルに設定
     if order:
         for item in order.get('line_items', []):
             image_url = item.get('image', {}).get('src', '')
@@ -2116,13 +1753,28 @@ def send_discord_notification(order_data, design, webhook_url, order=None):
                 embed['thumbnail'] = {'url': image_url}
                 break
 
-    response = requests.post(
-        webhook_url,
-        json={"embeds": [embed]},
-        headers={"Content-Type": "application/json"}
-    )
+    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json"
+    }
 
-    return response.status_code == 204
+    try:
+        response = requests.post(url, json={
+            "embeds": [embed],
+            "flags": 4096  # SUPPRESS_NOTIFICATIONS（サイレント）
+        }, headers=headers)
+        if response.status_code in [200, 201]:
+            msg_data = response.json()
+            msg_id = msg_data.get("id")
+            print(f"[Discord] Purchase notification sent: msg_id={msg_id}")
+            return msg_id
+        else:
+            print(f"[Discord] Purchase notification failed: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        print(f"[Discord] Purchase notification error: {e}")
+        return None
 
 
 # 発送管理チャンネルID
@@ -2220,15 +1872,95 @@ def send_shipping_notification(order_data, order, bot_token):
     }
 
     try:
-        response = requests.post(url, json={"embeds": [embed], "components": components}, headers=headers)
+        response = requests.post(url, json={
+            "embeds": [embed],
+            "components": components,
+            "flags": 4096  # SUPPRESS_NOTIFICATIONS（サイレント）
+        }, headers=headers)
         if response.status_code in [200, 201]:
-            print(f"[Shipping] Notification sent for order #{order_data['order_id']}")
-            return True
+            msg_data = response.json()
+            msg_id = msg_data.get("id")
+            print(f"[Shipping] Notification sent: msg_id={msg_id}")
+            return msg_id
         else:
             print(f"[Shipping] Failed: {response.status_code} - {response.text}")
-            return False
+            return None
     except Exception as e:
         print(f"[Shipping] Error: {e}")
+        return None
+
+
+def send_admin_line_notification(order_data, order, line_token, admin_line_user_id, notify_msg_id=None):
+    """管理者LINEに通知送信（通知あり）"""
+    if not line_token or not admin_line_user_id:
+        print("[AdminLINE] Missing line_token or admin_line_user_id")
+        return False
+
+    billing = order.get('billing', {}) if order else {}
+    customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}".strip()
+    order_total = order.get('total', '0') if order else '0'
+
+    text = f"📦 新規注文 #{order_data['order_id']}\n"
+    text += f"👤 {customer_name}\n"
+    text += f"💰 ¥{int(float(order_total)):,}\n"
+    text += f"📦 {order_data.get('board_name', '')} No.{order_data.get('board_number', '')}"
+
+    if notify_msg_id:
+        guild_id = os.environ.get("DISCORD_GUILD_ID", "1462312636216508530")
+        channel_id = os.environ.get("DISCORD_PURCHASE_NOTIFY_CHANNEL", "1462313247096045743")
+        discord_link = f"https://discord.com/channels/{guild_id}/{channel_id}/{notify_msg_id}"
+        text += f"\n\n📱 {discord_link}"
+
+    url = "https://api.line.me/v2/bot/message/push"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {line_token}"
+    }
+    data = {"to": admin_line_user_id, "messages": [{"type": "text", "text": text}]}
+
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        if response.status_code == 200:
+            print(f"[AdminLINE] Notification sent for order #{order_data['order_id']}")
+            return True
+        else:
+            print(f"[AdminLINE] Failed: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        print(f"[AdminLINE] Error: {e}")
+        return False
+
+
+def add_cross_links_to_message(bot_token, channel_id, message_id, links_field):
+    """Discordメッセージに相互リンクフィールドを追加"""
+    url = f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}"
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            print(f"[CrossLink] Failed to get message: {response.status_code}")
+            return False
+
+        msg = response.json()
+        embeds = msg.get("embeds", [])
+        if embeds:
+            embeds[-1]["fields"] = embeds[-1].get("fields", []) + [
+                {"name": "📎 関連リンク", "value": links_field, "inline": False}
+            ]
+
+        response = requests.patch(url, json={"embeds": embeds}, headers=headers)
+        if response.status_code == 200:
+            print(f"[CrossLink] Updated message {message_id}")
+            return True
+        else:
+            print(f"[CrossLink] Failed to update: {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"[CrossLink] Error: {e}")
         return False
 
 
@@ -2375,17 +2107,36 @@ def process_order(order_id, config):
             design_id = design.get('id')
             print(f"[Canva] Design ID: {design_id}")
 
-            # Discord通知は廃止（2026-01-31: Telegramに統一）
-            # send_discord_notification(order_data, design, config['discord_webhook'], order)
-            # send_shipping_notification(order_data, order, config.get('discord_bot_token', ''))
+            # ① 注文通知（サイレント）→ メッセージID取得
+            bot_token = config.get('discord_bot_token', '')
+            notify_msg_id = send_discord_notification(order_data, design, bot_token, order)
 
-            # Telegram通知（EC管理 + 発送管理 + ステータス管理 → 相互リンク）
-            if config.get('telegram_bot_token'):
-                print(f"[Canva] Sending Telegram notifications with cross-links...")
-                send_telegram_all_with_crosslinks(order_data, design, order, config)
-                print(f"[Canva] Telegram notifications sent")
+            # ③ 発送管理（サイレント）→ メッセージID取得
+            shipping_msg_id = send_shipping_notification(order_data, order, bot_token)
+
+            # ④ 管理者LINE通知（通知あり）
+            line_token = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', '')
+            admin_line_id = os.environ.get('ADMIN_LINE_USER_ID', '')
+            if line_token and admin_line_id:
+                send_admin_line_notification(order_data, order, line_token, admin_line_id, notify_msg_id)
             else:
-                print(f"[WARN] No Telegram bot token, skipping Telegram notifications")
+                print("[WARN] ADMIN_LINE_USER_ID not set, skipping admin LINE notification")
+
+            # 相互リンク設置
+            guild_id = os.environ.get("DISCORD_GUILD_ID", "1462312636216508530")
+            notify_ch = os.environ.get("DISCORD_PURCHASE_NOTIFY_CHANNEL", "1462313247096045743")
+            shipping_ch = DISCORD_SHIPPING_CHANNEL_ID
+
+            if notify_msg_id and shipping_msg_id and bot_token:
+                # ① → ③へのリンク
+                notify_links = f"[📦 発送管理](https://discord.com/channels/{guild_id}/{shipping_ch}/{shipping_msg_id})"
+                add_cross_links_to_message(bot_token, notify_ch, notify_msg_id, notify_links)
+
+                # ③ → ①へのリンク
+                shipping_links = f"[🛒 注文通知](https://discord.com/channels/{guild_id}/{notify_ch}/{notify_msg_id})"
+                add_cross_links_to_message(bot_token, shipping_ch, shipping_msg_id, shipping_links)
+
+                print(f"[Canva] Cross-links established between notifications")
 
             # 処理済みマーク（ここでロックも解除される）
             design_url = design.get('urls', {}).get('edit_url', '')
@@ -2408,9 +2159,6 @@ def process_order(order_id, config):
         if lock_acquired and not success:
             clear_processing_lock(order_id, config['wc_url'], config['wc_key'], config['wc_secret'])
             if error_message:
-                # Telegramにエラー通知（管理者のみ、お客様には何も送らない）
-                if config.get('telegram_bot_token'):
-                    send_telegram_error_notification_tg(order_id, error_message, config)
-                # Discord通知（互換性のため残す）
+                # Discordにエラー通知
                 if config.get('discord_webhook'):
                     send_discord_error_notification(order_id, error_message, config['discord_webhook'])

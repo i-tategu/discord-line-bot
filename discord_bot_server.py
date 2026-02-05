@@ -157,6 +157,52 @@ def get_line_user_id_from_thread(thread_id):
     return None
 
 
+# テンプレート
+TEMPLATES_FILE = os.path.join(os.path.dirname(__file__), "line_templates.json")
+
+
+def load_templates():
+    """LINEテンプレートを読み込み"""
+    if os.path.exists(TEMPLATES_FILE):
+        with open(TEMPLATES_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data.get("templates", [])
+    return []
+
+
+def get_thread_customer_info(thread):
+    """フォーラムスレッドから顧客情報を取得"""
+    name_match = re.search(r'[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*(?:#\d+\s+)?(.+?)\s*様', thread.name)
+    customer_name = name_match.group(1) if name_match else "お客様"
+
+    order_match = re.search(r'#(\d+)', thread.name)
+    order_id = order_match.group(1) if order_match else None
+
+    return customer_name, order_id
+
+
+async def find_line_user_id_in_thread(thread):
+    """スレッドからLINE User IDを検索"""
+    line_user_id = get_line_user_id_from_thread(thread.id)
+    if line_user_id:
+        return line_user_id
+
+    async for msg in thread.history(limit=5, oldest_first=True):
+        if msg.content:
+            match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', msg.content)
+            if match:
+                return match.group(1)
+        for embed in msg.embeds:
+            embed_text = (embed.description or "")
+            for field in embed.fields:
+                embed_text += f" {field.name} {field.value}"
+            match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', embed_text)
+            if match:
+                return match.group(1)
+
+    return None
+
+
 async def create_status_embed():
     """ステータス一覧のEmbed作成"""
     summary = get_status_summary()
@@ -172,7 +218,7 @@ async def create_status_embed():
     embeds.append(header)
 
     for status in CustomerStatus:
-        if status == CustomerStatus.SHIPPED:
+        if status in (CustomerStatus.SHIPPED, CustomerStatus.COMPLETED):
             continue
 
         data = summary[status.value]  # summaryはstatus.valueをキーとして使用
@@ -188,10 +234,15 @@ async def create_status_embed():
             for c in data['customers'][:10]:
                 channel_id = c.get('discord_channel_id')
                 name = c.get('display_name', '不明')
+                # 注文番号を取得
+                order_num = ""
+                if c.get('orders'):
+                    latest_order = c['orders'][-1]
+                    order_num = f"#{latest_order.get('order_id', '')} "
                 if channel_id:
-                    customer_links.append(f"• <#{channel_id}> {name}様")
+                    customer_links.append(f"• {order_num}<#{channel_id}> {name}様")
                 else:
-                    customer_links.append(f"• {name}様")
+                    customer_links.append(f"• {order_num}{name}様")
 
             embed.description = "\n".join(customer_links)
 
@@ -202,7 +253,7 @@ async def create_status_embed():
 
         embeds.append(embed)
 
-    shipped_data = summary[CustomerStatus.SHIPPED.value]  # summaryはstatus.valueをキーとして使用
+    shipped_data = summary[CustomerStatus.SHIPPED.value]
     shipped_config = STATUS_CONFIG[CustomerStatus.SHIPPED]
     shipped_embed = discord.Embed(
         title=f"{shipped_config['emoji']} {shipped_config['label']} ({shipped_data['count']}件)",
@@ -216,6 +267,21 @@ async def create_status_embed():
     else:
         shipped_embed.description = "_該当なし_"
     embeds.append(shipped_embed)
+
+    completed_data = summary[CustomerStatus.COMPLETED.value]
+    completed_config = STATUS_CONFIG[CustomerStatus.COMPLETED]
+    completed_embed = discord.Embed(
+        title=f"{completed_config['emoji']} {completed_config['label']} ({completed_data['count']}件)",
+        color=completed_config['color']
+    )
+    if completed_data['customers']:
+        names = [c.get('display_name', '不明') + "様" for c in completed_data['customers'][:5]]
+        completed_embed.description = "、".join(names)
+        if len(completed_data['customers']) > 5:
+            completed_embed.description += f" 他{len(completed_data['customers']) - 5}件"
+    else:
+        completed_embed.description = "_該当なし_"
+    embeds.append(completed_embed)
 
     return embeds
 
@@ -638,9 +704,11 @@ async def handle_shipped(interaction: discord.Interaction, order_id: str):
 @app_commands.describe(new_status="新しいステータス")
 @app_commands.choices(new_status=[
     app_commands.Choice(name="🟡 購入済み", value="purchased"),
-    app_commands.Choice(name="🔵 デザイン確定", value="design"),
-    app_commands.Choice(name="🟢 制作完了", value="production"),
-    app_commands.Choice(name="✅ 発送済み", value="shipped"),
+    app_commands.Choice(name="🟠 デザイン作成中", value="designing"),
+    app_commands.Choice(name="🔵 デザイン確定", value="design-confirmed"),
+    app_commands.Choice(name="🟢 制作完了", value="produced"),
+    app_commands.Choice(name="📦 発送済み", value="shipped"),
+    app_commands.Choice(name="✅ 完了", value="completed"),
 ])
 async def change_status(interaction: discord.Interaction, new_status: str):
     """ステータス変更コマンド"""
@@ -710,6 +778,242 @@ async def register_customer(interaction: discord.Interaction):
 
     await interaction.response.send_message(f"✅ {display_name}様を顧客リストに登録しました")
     await update_overview_channel()
+
+
+# ================== Template System ==================
+
+class TemplateSelect(discord.ui.Select):
+    """テンプレート選択メニュー"""
+    def __init__(self):
+        templates = load_templates()
+        options = []
+        for t in templates:
+            preview = t["text"].replace("{name}", "○○").replace("\n", " ")
+            desc = preview[:100] if len(preview) <= 100 else preview[:97] + "..."
+            options.append(discord.SelectOption(
+                label=t["label"],
+                value=t["id"],
+                emoji=t.get("emoji"),
+                description=desc
+            ))
+        super().__init__(
+            placeholder="テンプレートを選択...",
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        template_id = self.values[0]
+        templates = load_templates()
+        template = next((t for t in templates if t["id"] == template_id), None)
+
+        if not template:
+            await interaction.response.send_message("テンプレートが見つかりません", ephemeral=True)
+            return
+
+        thread = interaction.channel
+        if not isinstance(thread, discord.Thread):
+            await interaction.response.send_message("フォーラムスレッド内で使用してください", ephemeral=True)
+            return
+
+        # LINE User ID取得
+        line_user_id = await find_line_user_id_in_thread(thread)
+        if not line_user_id:
+            await interaction.response.send_message("❌ LINE User IDが見つかりません", ephemeral=True)
+            return
+
+        # 顧客情報取得
+        customer_name, order_id = get_thread_customer_info(thread)
+
+        # order_idがスレッド名にない場合、customer_managerから取得
+        if not order_id:
+            customer = get_customer(line_user_id)
+            if customer and customer.get("orders"):
+                order_id = str(customer["orders"][-1].get("order_id", ""))
+
+        # プレースホルダー置換
+        message_text = template["text"].replace("{name}", customer_name)
+
+        # プレビュー表示
+        preview_embed = discord.Embed(
+            title=f"{template['emoji']} {template['label']}",
+            description=message_text,
+            color=0x06C755
+        )
+        footer_parts = []
+        if template.get("status_action"):
+            status_label = template["status_action"]
+            try:
+                status_label = STATUS_CONFIG[CustomerStatus(template["status_action"])]["label"]
+            except ValueError:
+                pass
+            footer_parts.append(f"ステータス → {status_label}")
+        if order_id:
+            footer_parts.append(f"注文 #{order_id}")
+        if footer_parts:
+            preview_embed.set_footer(text=" | ".join(footer_parts))
+
+        view = TemplateConfirmView(
+            template=template,
+            line_user_id=line_user_id,
+            customer_name=customer_name,
+            message_text=message_text,
+            order_id=order_id
+        )
+
+        await interaction.response.send_message(
+            embed=preview_embed,
+            view=view,
+            ephemeral=True
+        )
+
+
+class TemplateConfirmView(discord.ui.View):
+    """テンプレート送信確認ビュー"""
+    def __init__(self, template, line_user_id, customer_name, message_text, order_id=None):
+        super().__init__(timeout=300)
+        self.template = template
+        self.line_user_id = line_user_id
+        self.customer_name = customer_name
+        self.message_text = message_text
+        self.order_id = order_id
+
+    @discord.ui.button(label="送信", style=discord.ButtonStyle.green, emoji="📤")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+
+        results = []
+
+        # 1. LINE送信
+        success = send_line_message(self.line_user_id, [
+            {"type": "text", "text": self.message_text}
+        ])
+
+        if not success:
+            await interaction.followup.send("❌ LINE送信に失敗しました", ephemeral=True)
+            return
+
+        results.append("✅ LINE送信完了")
+
+        # 2. WooCommerceステータス更新
+        status_action = self.template.get("status_action")
+        if status_action and self.order_id:
+            wc_url = get_wc_url()
+            wc_key = get_wc_consumer_key()
+            wc_secret = get_wc_consumer_secret()
+
+            if all([wc_url, wc_key, wc_secret]):
+                try:
+                    url = f"{wc_url}/wp-json/wc/v3/orders/{self.order_id}"
+                    resp = requests.put(url, auth=(wc_key, wc_secret), json={"status": status_action})
+                    if resp.status_code == 200:
+                        results.append(f"✅ WooCommerce → {status_action}")
+                    else:
+                        results.append(f"⚠️ WooCommerce更新失敗 ({resp.status_code})")
+                except Exception as e:
+                    results.append(f"⚠️ WooCommerceエラー: {e}")
+
+        # 3. customer_managerステータス更新
+        if status_action:
+            try:
+                new_status = CustomerStatus(status_action)
+                update_customer_status(self.line_user_id, new_status, self.order_id)
+                results.append("✅ 顧客ステータス更新")
+            except ValueError:
+                pass
+
+        # 4. フォーラムスレッドの名前更新（絵文字変更）
+        if status_action:
+            try:
+                new_status = CustomerStatus(status_action)
+                config = STATUS_CONFIG[new_status]
+                thread = interaction.channel
+                new_name = re.sub(
+                    r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*',
+                    f"{config['emoji']} ",
+                    thread.name
+                )
+                if new_name != thread.name:
+                    await thread.edit(name=new_name)
+                    results.append("✅ スレッド名更新")
+            except Exception as e:
+                print(f"[WARN] Thread name update failed: {e}")
+
+        # 5. フォーラムタグ更新
+        if status_action:
+            try:
+                thread = interaction.channel
+                forum = thread.parent
+                if forum and isinstance(forum, discord.ForumChannel):
+                    new_status = CustomerStatus(status_action)
+                    config = STATUS_CONFIG[new_status]
+                    target_tag = None
+                    for tag in forum.available_tags:
+                        if config['label'] in tag.name or config['emoji'] in (getattr(tag, 'emoji', None) or ''):
+                            target_tag = tag
+                            break
+
+                    if target_tag:
+                        await thread.edit(applied_tags=[target_tag])
+                        results.append(f"✅ タグ更新: {target_tag.name}")
+            except Exception as e:
+                print(f"[WARN] Tag update failed: {e}")
+
+        # 6. スレッドに送信記録を投稿
+        from datetime import datetime
+        thread = interaction.channel
+        sent_embed = discord.Embed(
+            description=self.message_text,
+            color=0x06C755
+        )
+        sent_embed.set_author(name=f"📤 {self.template['label']}")
+        sent_embed.set_footer(text=f"LINE送信済み • {datetime.now().strftime('%m/%d %H:%M')}")
+        await thread.send(embed=sent_embed)
+
+        # 7. 顧客一覧を更新
+        await update_overview_channel()
+
+        # 結果報告
+        await interaction.followup.send("\n".join(results), ephemeral=True)
+        self.stop()
+
+    @discord.ui.button(label="キャンセル", style=discord.ButtonStyle.grey)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("キャンセルしました", ephemeral=True)
+        self.stop()
+
+
+class TemplateView(discord.ui.View):
+    """テンプレート選択ビュー"""
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(TemplateSelect())
+
+
+@bot.tree.command(name="template", description="LINEテンプレートを送信")
+async def send_template(interaction: discord.Interaction):
+    """テンプレート選択コマンド"""
+    channel = interaction.channel
+
+    if not isinstance(channel, discord.Thread):
+        await interaction.response.send_message(
+            "このコマンドは #LINE対応 フォーラムのスレッド内で使用してください",
+            ephemeral=True
+        )
+        return
+
+    if str(channel.parent_id) != str(get_forum_line()):
+        await interaction.response.send_message(
+            "このコマンドは #LINE対応 フォーラムのスレッド内で使用してください",
+            ephemeral=True
+        )
+        return
+
+    view = TemplateView()
+    await interaction.response.send_message(
+        "📋 送信するテンプレートを選択してください",
+        view=view,
+        ephemeral=True
+    )
 
 
 # ================== API Endpoints ==================
@@ -872,10 +1176,6 @@ def woo_webhook():
                 'canva_refresh_token': get_canva_refresh_token(),
                 'discord_webhook': get_canva_webhook_url(),
                 'discord_bot_token': get_discord_token(),
-                'telegram_bot_token': os.environ.get('TELEGRAM_BOT_TOKEN', ''),
-                'telegram_status_group': os.environ.get('TELEGRAM_STATUS_GROUP', ''),
-                'telegram_shipping_group': os.environ.get('TELEGRAM_SHIPPING_GROUP', ''),
-                'telegram_status_mgmt_group': os.environ.get('TELEGRAM_STATUS_MGMT_GROUP', ''),
             }
             canva_process_order(order_id, config)
         except Exception as e:
@@ -914,10 +1214,6 @@ def api_canva_process():
             'canva_refresh_token': get_canva_refresh_token(),
             'discord_webhook': get_canva_webhook_url(),
             'discord_bot_token': get_discord_token(),
-            'telegram_bot_token': os.environ.get('TELEGRAM_BOT_TOKEN', ''),
-            'telegram_status_group': os.environ.get('TELEGRAM_STATUS_GROUP', ''),
-            'telegram_shipping_group': os.environ.get('TELEGRAM_SHIPPING_GROUP', ''),
-            'telegram_status_mgmt_group': os.environ.get('TELEGRAM_STATUS_MGMT_GROUP', ''),
         }
         result = canva_process_order(order_id, config)
         return jsonify({"success": result, "order_id": order_id})

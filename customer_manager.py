@@ -6,34 +6,52 @@ import json
 from datetime import datetime
 from enum import Enum
 
-# ステータス定義
+# ステータス定義（WooCommerceカスタムステータスと一致）
 class CustomerStatus(Enum):
-    PURCHASED = "purchased"        # 購入済み
-    DESIGN_CONFIRMED = "design"    # デザイン確定
-    PRODUCTION_DONE = "production" # 制作完了
-    SHIPPED = "shipped"            # 発送済み
+    PURCHASED = "purchased"            # 購入済み
+    DESIGNING = "designing"            # デザイン作成中
+    DESIGN_CONFIRMED = "design-confirmed"  # デザイン確定
+    PRODUCED = "produced"              # 制作完了
+    SHIPPED = "shipped"                # 発送済み
+    COMPLETED = "completed"            # 完了
+
+# 旧ステータス値のマイグレーション
+STATUS_MIGRATION = {
+    "design": "design-confirmed",
+    "production": "produced",
+}
 
 # ステータス表示設定
 STATUS_CONFIG = {
     CustomerStatus.PURCHASED: {
         "label": "購入済み",
         "emoji": "🟡",
-        "color": 0xFFD700,  # ゴールド
+        "color": 0xFFD700,
+    },
+    CustomerStatus.DESIGNING: {
+        "label": "デザイン作成中",
+        "emoji": "🟠",
+        "color": 0xFF8C00,
     },
     CustomerStatus.DESIGN_CONFIRMED: {
         "label": "デザイン確定",
         "emoji": "🔵",
-        "color": 0x3498DB,  # ブルー
+        "color": 0x3498DB,
     },
-    CustomerStatus.PRODUCTION_DONE: {
+    CustomerStatus.PRODUCED: {
         "label": "制作完了",
         "emoji": "🟢",
-        "color": 0x2ECC71,  # グリーン
+        "color": 0x2ECC71,
     },
     CustomerStatus.SHIPPED: {
         "label": "発送済み",
+        "emoji": "📦",
+        "color": 0x9B59B6,
+    },
+    CustomerStatus.COMPLETED: {
+        "label": "完了",
         "emoji": "✅",
-        "color": 0x95A5A6,  # グレー
+        "color": 0x95A5A6,
     },
 }
 
@@ -224,6 +242,8 @@ def get_all_customers_grouped():
 
     for line_user_id, data in customers.items():
         status_str = data.get("status", CustomerStatus.PURCHASED.value)
+        # 旧ステータス値をマイグレーション
+        status_str = STATUS_MIGRATION.get(status_str, status_str)
         try:
             status = CustomerStatus(status_str)
         except ValueError:
