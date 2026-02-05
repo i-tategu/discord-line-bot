@@ -399,6 +399,9 @@ async def on_ready():
     print(f"[OK] Logged in as: {bot.user}")
     print(f"[OK] Application ID: {bot.application_id}")
 
+    # Persistent Viewを登録（Bot再起動後もボタンが動作）
+    bot.add_view(TemplatePersistentView())
+
     try:
         guild = discord.Object(id=int(get_guild_id()))
         bot.tree.copy_global_to(guild=guild)
@@ -747,110 +750,42 @@ async def register_customer(interaction: discord.Interaction):
 
 # ================== Template System ==================
 
-class TemplateSelect(discord.ui.Select):
-    """テンプレート選択メニュー"""
-    def __init__(self):
-        templates = load_templates()
-        options = []
-        for t in templates:
-            preview = t["text"].replace("{name}", "○○").replace("\n", " ")
-            desc = preview[:100] if len(preview) <= 100 else preview[:97] + "..."
-            options.append(discord.SelectOption(
-                label=t["label"],
-                value=t["id"],
-                emoji=t.get("emoji"),
-                description=desc
-            ))
-        super().__init__(
-            placeholder="テンプレートを選択...",
-            options=options
-        )
+class TemplateEditModal(discord.ui.Modal):
+    """テンプレート編集モーダル"""
+    def __init__(self, template, customer_name, order_id, line_user_id):
+        self.template = template
+        self.customer_name = customer_name
+        self.order_id = order_id
+        self.line_user_id = line_user_id
 
-    async def callback(self, interaction: discord.Interaction):
-        template_id = self.values[0]
-        templates = load_templates()
-        template = next((t for t in templates if t["id"] == template_id), None)
-
-        if not template:
-            await interaction.response.send_message("テンプレートが見つかりません", ephemeral=True)
-            return
-
-        thread = interaction.channel
-        if not isinstance(thread, discord.Thread):
-            await interaction.response.send_message("フォーラムスレッド内で使用してください", ephemeral=True)
-            return
-
-        # LINE User ID取得
-        line_user_id = await find_line_user_id_in_thread(thread)
-        if not line_user_id:
-            await interaction.response.send_message("❌ LINE User IDが見つかりません", ephemeral=True)
-            return
-
-        # 顧客情報取得
-        customer_name, order_id = get_thread_customer_info(thread)
-
-        # order_idがスレッド名にない場合、customer_managerから取得
-        if not order_id:
-            customer = get_customer(line_user_id)
-            if customer and customer.get("orders"):
-                order_id = str(customer["orders"][-1].get("order_id", ""))
-
-        # プレースホルダー置換
-        message_text = template["text"].replace("{name}", customer_name)
-
-        # プレビュー表示
-        preview_embed = discord.Embed(
-            title=f"{template['emoji']} {template['label']}",
-            description=message_text,
-            color=0x06C755
-        )
-        footer_parts = []
+        title = template["label"]
         if template.get("status_action"):
-            status_label = template["status_action"]
             try:
-                status_label = STATUS_CONFIG[CustomerStatus(template["status_action"])]["label"]
+                sl = STATUS_CONFIG[CustomerStatus(template["status_action"])]["label"]
+                title += f" → {sl}"
             except ValueError:
                 pass
-            footer_parts.append(f"ステータス → {status_label}")
-        if order_id:
-            footer_parts.append(f"注文 #{order_id}")
-        if footer_parts:
-            preview_embed.set_footer(text=" | ".join(footer_parts))
+        super().__init__(title=title[:45])
 
-        view = TemplateConfirmView(
-            template=template,
-            line_user_id=line_user_id,
-            customer_name=customer_name,
-            message_text=message_text,
-            order_id=order_id
+        prefilled = template["text"].replace("{name}", customer_name)
+        self.message_input = discord.ui.TextInput(
+            label="メッセージ内容（編集可能）",
+            style=discord.TextStyle.long,
+            default=prefilled,
+            max_length=2000,
+            required=True,
         )
+        self.add_item(self.message_input)
 
-        await interaction.response.send_message(
-            embed=preview_embed,
-            view=view,
-            ephemeral=True
-        )
-
-
-class TemplateConfirmView(discord.ui.View):
-    """テンプレート送信確認ビュー"""
-    def __init__(self, template, line_user_id, customer_name, message_text, order_id=None):
-        super().__init__(timeout=300)
-        self.template = template
-        self.line_user_id = line_user_id
-        self.customer_name = customer_name
-        self.message_text = message_text
-        self.order_id = order_id
-
-    @discord.ui.button(label="送信", style=discord.ButtonStyle.green, emoji="📤")
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
+        message_text = self.message_input.value
         results = []
 
         # 1. LINE送信
         success = send_line_message(self.line_user_id, [
-            {"type": "text", "text": self.message_text}
+            {"type": "text", "text": message_text}
         ])
 
         if not success:
@@ -927,7 +862,7 @@ class TemplateConfirmView(discord.ui.View):
         from datetime import datetime
         thread = interaction.channel
         sent_embed = discord.Embed(
-            description=self.message_text,
+            description=message_text,
             color=0x06C755
         )
         sent_embed.set_author(name=f"📤 {self.template['label']}")
@@ -937,26 +872,91 @@ class TemplateConfirmView(discord.ui.View):
         # 7. 顧客一覧を更新
         await update_overview_channel()
 
+        # 8. テンプレートボタンを再投稿（常に下部に表示）
+        await post_template_buttons(thread)
+
         # 結果報告
         await interaction.followup.send("\n".join(results), ephemeral=True)
-        self.stop()
-
-    @discord.ui.button(label="キャンセル", style=discord.ButtonStyle.grey)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("キャンセルしました", ephemeral=True)
-        self.stop()
 
 
-class TemplateView(discord.ui.View):
-    """テンプレート選択ビュー"""
+class TemplatePersistentView(discord.ui.View):
+    """テンプレートボタン常設ビュー（Bot再起動後も動作）"""
     def __init__(self):
-        super().__init__(timeout=300)
-        self.add_item(TemplateSelect())
+        super().__init__(timeout=None)
+
+    async def _handle_button(self, interaction: discord.Interaction, template_id: str):
+        """ボタン押下時の共通処理"""
+        templates = load_templates()
+        template = next((t for t in templates if t["id"] == template_id), None)
+        if not template:
+            await interaction.response.send_message("テンプレートが見つかりません", ephemeral=True)
+            return
+
+        thread = interaction.channel
+        if not isinstance(thread, discord.Thread):
+            await interaction.response.send_message("スレッド内で使用してください", ephemeral=True)
+            return
+
+        # LINE User ID取得
+        line_user_id = await find_line_user_id_in_thread(thread)
+        if not line_user_id:
+            await interaction.response.send_message("❌ LINE User IDが見つかりません", ephemeral=True)
+            return
+
+        # 顧客情報取得
+        customer_name, order_id = get_thread_customer_info(thread)
+        if not order_id:
+            customer = get_customer(line_user_id)
+            if customer and customer.get("orders"):
+                order_id = str(customer["orders"][-1].get("order_id", ""))
+
+        # モーダル表示（編集可能）
+        modal = TemplateEditModal(template, customer_name, order_id, line_user_id)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="① あいさつ", style=discord.ButtonStyle.secondary, custom_id="tpl_greeting", emoji="👋", row=0)
+    async def btn_greeting(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "greeting")
+
+    @discord.ui.button(label="② デザイン確認", style=discord.ButtonStyle.secondary, custom_id="tpl_design_check", emoji="🎨", row=0)
+    async def btn_design_check(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "design_check")
+
+    @discord.ui.button(label="③ 確定", style=discord.ButtonStyle.primary, custom_id="tpl_design_confirmed", emoji="✅", row=0)
+    async def btn_design_confirmed(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "design_confirmed")
+
+    @discord.ui.button(label="④ 制作完了", style=discord.ButtonStyle.primary, custom_id="tpl_production_done", emoji="🎉", row=0)
+    async def btn_production_done(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "production_done")
+
+    @discord.ui.button(label="⑤ 発送完了", style=discord.ButtonStyle.success, custom_id="tpl_shipped", emoji="📦", row=1)
+    async def btn_shipped(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "shipped")
+
+    @discord.ui.button(label="⑥ お礼①", style=discord.ButtonStyle.secondary, custom_id="tpl_thanks_1", emoji="🙏", row=1)
+    async def btn_thanks_1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "thanks_1")
+
+    @discord.ui.button(label="⑦ お礼②", style=discord.ButtonStyle.secondary, custom_id="tpl_thanks_2", emoji="💐", row=1)
+    async def btn_thanks_2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "thanks_2")
 
 
-@bot.tree.command(name="template", description="LINEテンプレートを送信")
+async def post_template_buttons(thread):
+    """テンプレートボタンをスレッドに投稿"""
+    embed = discord.Embed(
+        title="📋 LINEテンプレート送信",
+        description="ボタンを押すと編集画面が開きます。内容を確認・編集してから送信できます。\n③④⑤はステータスも自動更新されます。",
+        color=0x06C755
+    )
+    view = TemplatePersistentView()
+    await thread.send(embed=embed, view=view)
+
+
+@bot.tree.command(name="template", description="LINEテンプレートボタンを表示")
 async def send_template(interaction: discord.Interaction):
-    """テンプレート選択コマンド"""
+    """テンプレートボタン投稿コマンド"""
     channel = interaction.channel
 
     if not isinstance(channel, discord.Thread):
@@ -973,12 +973,9 @@ async def send_template(interaction: discord.Interaction):
         )
         return
 
-    view = TemplateView()
-    await interaction.response.send_message(
-        "📋 送信するテンプレートを選択してください",
-        view=view,
-        ephemeral=True
-    )
+    await interaction.response.defer(ephemeral=True)
+    await post_template_buttons(channel)
+    await interaction.followup.send("✅ テンプレートボタンを表示しました", ephemeral=True)
 
 
 # ================== API Endpoints ==================
