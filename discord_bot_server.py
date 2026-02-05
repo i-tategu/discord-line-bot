@@ -981,13 +981,8 @@ async def post_template_buttons(thread):
             except Exception:
                 pass
 
-        embed = discord.Embed(
-            title="📋 LINEテンプレート送信",
-            description="ボタンを押すと編集画面が開きます。\n③④⑤はステータスも自動更新されます。",
-            color=0x06C755
-        )
         view = TemplatePersistentView()
-        msg = await thread.send(embed=embed, view=view)
+        msg = await thread.send(view=view)
         _template_button_msg_ids[thread_key] = msg.id
     finally:
         _posting_buttons_lock.discard(thread_key)
