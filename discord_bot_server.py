@@ -218,10 +218,7 @@ async def create_status_embed():
     embeds.append(header)
 
     for status in CustomerStatus:
-        if status in (CustomerStatus.SHIPPED, CustomerStatus.COMPLETED):
-            continue
-
-        data = summary[status.value]  # summaryはstatus.valueをキーとして使用
+        data = summary[status.value]
         config = STATUS_CONFIG[status]
 
         embed = discord.Embed(
@@ -252,36 +249,6 @@ async def create_status_embed():
             embed.description = "_該当なし_"
 
         embeds.append(embed)
-
-    shipped_data = summary[CustomerStatus.SHIPPED.value]
-    shipped_config = STATUS_CONFIG[CustomerStatus.SHIPPED]
-    shipped_embed = discord.Embed(
-        title=f"{shipped_config['emoji']} {shipped_config['label']} ({shipped_data['count']}件)",
-        color=shipped_config['color']
-    )
-    if shipped_data['customers']:
-        names = [c.get('display_name', '不明') + "様" for c in shipped_data['customers'][:5]]
-        shipped_embed.description = "、".join(names)
-        if len(shipped_data['customers']) > 5:
-            shipped_embed.description += f" 他{len(shipped_data['customers']) - 5}件"
-    else:
-        shipped_embed.description = "_該当なし_"
-    embeds.append(shipped_embed)
-
-    completed_data = summary[CustomerStatus.COMPLETED.value]
-    completed_config = STATUS_CONFIG[CustomerStatus.COMPLETED]
-    completed_embed = discord.Embed(
-        title=f"{completed_config['emoji']} {completed_config['label']} ({completed_data['count']}件)",
-        color=completed_config['color']
-    )
-    if completed_data['customers']:
-        names = [c.get('display_name', '不明') + "様" for c in completed_data['customers'][:5]]
-        completed_embed.description = "、".join(names)
-        if len(completed_data['customers']) > 5:
-            completed_embed.description += f" 他{len(completed_data['customers']) - 5}件"
-    else:
-        completed_embed.description = "_該当なし_"
-    embeds.append(completed_embed)
 
     return embeds
 
@@ -704,11 +671,9 @@ async def handle_shipped(interaction: discord.Interaction, order_id: str):
 @app_commands.describe(new_status="新しいステータス")
 @app_commands.choices(new_status=[
     app_commands.Choice(name="🟡 購入済み", value="purchased"),
-    app_commands.Choice(name="🟠 デザイン作成中", value="designing"),
     app_commands.Choice(name="🔵 デザイン確定", value="design-confirmed"),
     app_commands.Choice(name="🟢 制作完了", value="produced"),
     app_commands.Choice(name="📦 発送済み", value="shipped"),
-    app_commands.Choice(name="✅ 完了", value="completed"),
 ])
 async def change_status(interaction: discord.Interaction, new_status: str):
     """ステータス変更コマンド"""

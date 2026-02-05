@@ -9,16 +9,16 @@ from enum import Enum
 # ステータス定義（WooCommerceカスタムステータスと一致）
 class CustomerStatus(Enum):
     PURCHASED = "purchased"            # 購入済み
-    DESIGNING = "designing"            # デザイン作成中
     DESIGN_CONFIRMED = "design-confirmed"  # デザイン確定
     PRODUCED = "produced"              # 制作完了
     SHIPPED = "shipped"                # 発送済み
-    COMPLETED = "completed"            # 完了
 
 # 旧ステータス値のマイグレーション
 STATUS_MIGRATION = {
     "design": "design-confirmed",
     "production": "produced",
+    "designing": "purchased",
+    "completed": "shipped",
 }
 
 # ステータス表示設定
@@ -27,11 +27,6 @@ STATUS_CONFIG = {
         "label": "購入済み",
         "emoji": "🟡",
         "color": 0xFFD700,
-    },
-    CustomerStatus.DESIGNING: {
-        "label": "デザイン作成中",
-        "emoji": "🟠",
-        "color": 0xFF8C00,
     },
     CustomerStatus.DESIGN_CONFIRMED: {
         "label": "デザイン確定",
@@ -47,11 +42,6 @@ STATUS_CONFIG = {
         "label": "発送済み",
         "emoji": "📦",
         "color": 0x9B59B6,
-    },
-    CustomerStatus.COMPLETED: {
-        "label": "完了",
-        "emoji": "✅",
-        "color": 0x95A5A6,
     },
 }
 
