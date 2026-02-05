@@ -160,6 +160,10 @@ def get_line_user_id_from_thread(thread_id):
 # テンプレート
 TEMPLATES_FILE = os.path.join(os.path.dirname(__file__), "line_templates.json")
 
+# テンプレートボタンメッセージID追跡（スレッドID → メッセージID）
+_template_button_msg_ids = {}
+_posting_buttons_lock = set()  # 再投稿ループ防止
+
 
 def load_templates():
     """LINEテンプレートを読み込み"""
@@ -433,8 +437,23 @@ async def on_app_command_error(interaction: discord.Interaction, error):
 
 @bot.event
 async def on_message(message):
-    """Discordメッセージを監視してLINEに転送"""
+    """Discordメッセージを監視してLINEに転送 + テンプレートボタン再投稿"""
     print(f"[MSG] channel={message.channel.name if hasattr(message.channel, 'name') else 'DM'}, author={message.author}, bot={message.author.bot}")
+
+    # LINE対応フォーラムスレッド内のメッセージ → テンプレートボタン再投稿
+    if isinstance(message.channel, discord.Thread) and get_forum_line():
+        if str(message.channel.parent_id) == str(get_forum_line()):
+            thread_key = str(message.channel.id)
+            # 自分が投稿したボタンメッセージは無視（ループ防止）
+            if message.id != _template_button_msg_ids.get(thread_key):
+                # 送信記録Embed（📤）も無視
+                is_sent_record = False
+                for embed in message.embeds:
+                    if embed.author and embed.author.name and "📤" in embed.author.name:
+                        is_sent_record = True
+                        break
+                if not is_sent_record:
+                    await post_template_buttons(message.channel)
 
     if message.author == bot.user:
         return
@@ -944,14 +963,34 @@ class TemplatePersistentView(discord.ui.View):
 
 
 async def post_template_buttons(thread):
-    """テンプレートボタンをスレッドに投稿"""
-    embed = discord.Embed(
-        title="📋 LINEテンプレート送信",
-        description="ボタンを押すと編集画面が開きます。内容を確認・編集してから送信できます。\n③④⑤はステータスも自動更新されます。",
-        color=0x06C755
-    )
-    view = TemplatePersistentView()
-    await thread.send(embed=embed, view=view)
+    """テンプレートボタンをスレッドに投稿（前回のを削除して常に最下部に表示）"""
+    thread_key = str(thread.id)
+
+    # ループ防止
+    if thread_key in _posting_buttons_lock:
+        return
+    _posting_buttons_lock.add(thread_key)
+
+    try:
+        # 前回のボタンメッセージを削除
+        old_msg_id = _template_button_msg_ids.get(thread_key)
+        if old_msg_id:
+            try:
+                old_msg = await thread.fetch_message(old_msg_id)
+                await old_msg.delete()
+            except Exception:
+                pass
+
+        embed = discord.Embed(
+            title="📋 LINEテンプレート送信",
+            description="ボタンを押すと編集画面が開きます。\n③④⑤はステータスも自動更新されます。",
+            color=0x06C755
+        )
+        view = TemplatePersistentView()
+        msg = await thread.send(embed=embed, view=view)
+        _template_button_msg_ids[thread_key] = msg.id
+    finally:
+        _posting_buttons_lock.discard(thread_key)
 
 
 @bot.tree.command(name="template", description="LINEテンプレートボタンを表示")
