@@ -57,8 +57,8 @@ SUBSCRIPTIONS = [
 API_LIST = [
     {
         "name": "OpenAI API",
-        "usage_location": "Voicenotes",
-        "function_description": "GPT-4o-mini で音声メモのテキスト分析・要約・分類",
+        "usage_location": "Voicenotes / OpenClaw",
+        "function_description": "GPT-5 Nano/Mini/5.2/Codex。音声メモ分析 + OpenClaw マルチLLM",
         "pricing": "従量",
         "docs_url": "https://platform.openai.com/",
         "dashboard_url": "https://platform.openai.com/usage",
@@ -67,8 +67,8 @@ API_LIST = [
     },
     {
         "name": "Anthropic API",
-        "usage_location": "Claude API等",
-        "function_description": "Claude API。Claude Code等で利用",
+        "usage_location": "Claude API / OpenClaw",
+        "function_description": "Claude Haiku 4.5/Sonnet 4.5/Opus 4.6。OpenClaw マルチLLM",
         "pricing": "従量",
         "docs_url": "https://docs.anthropic.com/",
         "dashboard_url": "https://console.anthropic.com/settings/billing",
@@ -77,13 +77,23 @@ API_LIST = [
     },
     {
         "name": "Groq API",
-        "usage_location": "Voicenotes",
+        "usage_location": "Voicenotes / OpenClaw（将来）",
         "function_description": "Whisper 音声認識。録音→テキスト変換",
         "pricing": "従量",
         "docs_url": "https://console.groq.com/",
         "dashboard_url": "https://console.groq.com/settings/usage",
         "cost_tracking": "manual",
         "icon": "⚡",
+    },
+    {
+        "name": "Moonshot (Kimi) API",
+        "usage_location": "OpenClaw",
+        "function_description": "Kimi K2.5。OpenClaw マルチLLM（Tier 2）",
+        "pricing": "従量",
+        "docs_url": "https://platform.moonshot.cn/",
+        "dashboard_url": "https://platform.moonshot.cn/console",
+        "cost_tracking": "manual",
+        "icon": "🌙",
     },
     {
         "name": "Stripe",
@@ -107,8 +117,8 @@ API_LIST = [
     },
     {
         "name": "Google Gemini API",
-        "usage_location": "SPEClaud",
-        "function_description": "AI見積もり生成（実装済み・無効化中）",
+        "usage_location": "OpenClaw / SPEClaud",
+        "function_description": "Gemini 2.5 Flash/Pro。OpenClaw 意図分類 + マルチLLM",
         "pricing": "無料枠/従量",
         "docs_url": "https://aistudio.google.com/",
         "dashboard_url": "https://aistudio.google.com/",
