@@ -140,13 +140,14 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
             page = None
 
             while True:
-                # yarl.URL(encoded=True) で : が %3A にエンコードされる問題を回避
-                query = f"starting_at={start_iso}&ending_at={end_iso}&bucket_width=1d"
+                # starting_at のみ（必須）。ending_at, bucket_width は省略
+                req_params = {"starting_at": start_iso}
+                if end_iso:
+                    req_params["ending_at"] = end_iso
                 if page:
-                    query += f"&page={page}"
-                url = URL(f"{base_url}?{query}", encoded=True)
+                    req_params["page"] = page
 
-                async with session.get(url, headers=headers) as resp:
+                async with session.get(base_url, headers=headers, params=req_params) as resp:
                     if resp.status == 401:
                         return {"cost": None, "error": "API認証エラー（Admin API Key を確認）"}
                     if resp.status == 403:
