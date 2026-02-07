@@ -29,7 +29,9 @@ def _get_period(period: str) -> tuple[str, str]:
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     else:  # month
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    return start.isoformat(), tomorrow.isoformat()
+    # Anthropic API は Z 形式が必要（+00:00 だとエラーになる）
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    return start.strftime(fmt), tomorrow.strftime(fmt)
 
 
 def _get_period_unix(period: str) -> tuple[int, int]:
