@@ -24,14 +24,16 @@ def _get_period(period: str) -> tuple[str, str]:
     bucket_width=1d に対応するため、end は翌日0:00にする。
     """
     now = datetime.now(timezone.utc)
-    tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # ending_at は exclusive（「この日時より前に終わるバケット」）なので
+    # bucket_width=1d の場合、今日のバケットを含めるには +2日 必要
+    end = today_start + timedelta(days=2)
     if period == "today":
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        start = today_start
     else:  # month
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    # Anthropic API は Z 形式が必要（+00:00 だとエラーになる）
     fmt = "%Y-%m-%dT%H:%M:%SZ"
-    return start.strftime(fmt), tomorrow.strftime(fmt)
+    return start.strftime(fmt), end.strftime(fmt)
 
 
 def _get_period_unix(period: str) -> tuple[int, int]:
