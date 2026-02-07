@@ -140,10 +140,8 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
             page = None
 
             while True:
-                # starting_at のみ（必須）。ending_at, bucket_width は省略
+                # デバッグ: starting_at のみで送信（ending_at, bucket_width 完全省略）
                 req_params = {"starting_at": start_iso}
-                if end_iso:
-                    req_params["ending_at"] = end_iso
                 if page:
                     req_params["page"] = page
 
