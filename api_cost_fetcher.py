@@ -18,29 +18,33 @@ REQUEST_TIMEOUT = 15
 def _get_period(period: str) -> tuple[str, str]:
     """
     期間を返す。
-    period: "today" → 今日 0:00 UTC 〜 現在
-            "month" → 今月1日 0:00 UTC 〜 現在
+    period: "today" → 今日 0:00 UTC 〜 翌日 0:00 UTC
+            "month" → 今月1日 0:00 UTC 〜 翌日 0:00 UTC
     戻り値: (start_iso, end_iso) RFC 3339 形式
+    bucket_width=1d に対応するため、end は翌日0:00にする。
     """
     now = datetime.now(timezone.utc)
+    tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     if period == "today":
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     else:  # month
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    return start.isoformat(), now.isoformat()
+    return start.isoformat(), tomorrow.isoformat()
 
 
 def _get_period_unix(period: str) -> tuple[int, int]:
     """
     期間を Unix タイムスタンプ（秒）で返す。
     OpenAI Costs API 用。
+    bucket_width=1d に対応するため、end は翌日0:00にする。
     """
     now = datetime.now(timezone.utc)
+    tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     if period == "today":
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     else:  # month
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    return int(start.timestamp()), int(now.timestamp())
+    return int(start.timestamp()), int(tomorrow.timestamp())
 
 
 async def fetch_openai_cost(period: str = "today") -> dict:
