@@ -45,6 +45,14 @@ except ImportError as e:
     def get_current_tokens():
         return os.environ.get("CANVA_ACCESS_TOKEN"), os.environ.get("CANVA_REFRESH_TOKEN")
 
+# API一覧・コスト取得モジュール
+try:
+    from api_manager import register_api_commands, APICostView
+    API_MANAGER_ENABLED = True
+except ImportError as e:
+    API_MANAGER_ENABLED = False
+    print(f"[WARN] API Manager not available: {e}")
+
 load_dotenv()
 
 # 環境変数（全て遅延読み込み - Railway Railpack対策）
@@ -415,13 +423,30 @@ async def on_ready():
     # Persistent Viewを登録（Bot再起動後もボタンが動作）
     bot.add_view(TemplatePersistentView())
 
+    # API一覧・コスト取得の Persistent View とコマンド登録
+    if API_MANAGER_ENABLED:
+        bot.add_view(APICostView())
+        register_api_commands(bot)
+        print("[OK] API Manager commands registered")
+
     try:
         guild = discord.Object(id=int(get_guild_id()))
         bot.tree.copy_global_to(guild=guild)
         await bot.tree.sync(guild=guild)
-        print("[OK] Slash commands synced")
+        print("[OK] Slash commands synced to EC guild")
     except Exception as e:
-        print(f"[WARN] Failed to sync commands: {e}")
+        print(f"[WARN] Failed to sync commands to EC guild: {e}")
+
+    # 開発ログサーバーにもコマンドを同期（環境変数があれば）
+    dev_log_guild_id = os.environ.get("DEV_LOG_GUILD_ID")
+    if dev_log_guild_id:
+        try:
+            dev_guild = discord.Object(id=int(dev_log_guild_id))
+            bot.tree.copy_global_to(guild=dev_guild)
+            await bot.tree.sync(guild=dev_guild)
+            print("[OK] Slash commands synced to dev log guild")
+        except Exception as e:
+            print(f"[WARN] Failed to sync commands to dev log guild: {e}")
 
     await update_overview_channel()
     print("[OK] Overview channel updated")
