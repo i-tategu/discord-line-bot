@@ -126,15 +126,10 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
 
     start_iso, end_iso = _get_period(period)
 
-    url = "https://api.anthropic.com/v1/organizations/cost_report"
+    base_url = "https://api.anthropic.com/v1/organizations/cost_report"
     headers = {
         "x-api-key": admin_key,
         "anthropic-version": "2023-06-01",
-    }
-    params = {
-        "starting_at": start_iso,
-        "ending_at": end_iso,
-        "bucket_width": "1d",
     }
 
     try:
@@ -144,11 +139,13 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
             page = None
 
             while True:
-                req_params = dict(params)
+                # URL を手動構築（aiohttp の params= だと : が %3A にエンコードされる問題を回避）
+                query = f"starting_at={start_iso}&ending_at={end_iso}&bucket_width=1d"
                 if page:
-                    req_params["page"] = page
+                    query += f"&page={page}"
+                url = f"{base_url}?{query}"
 
-                async with session.get(url, headers=headers, params=req_params) as resp:
+                async with session.get(url, headers=headers) as resp:
                     if resp.status == 401:
                         return {"cost": None, "error": "API認証エラー（Admin API Key を確認）"}
                     if resp.status == 403:
