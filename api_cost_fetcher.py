@@ -127,7 +127,6 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
 
     start_iso, end_iso = _get_period(period)
 
-    base_url = "https://api.anthropic.com/v1/organizations/cost_report"
     headers = {
         "x-api-key": admin_key,
         "anthropic-version": "2023-06-01",
@@ -136,16 +135,35 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
     try:
         timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
         async with aiohttp.ClientSession(timeout=timeout) as session:
+            # まず API キーの有効性を確認（ワークスペース一覧）
+            diag_url = "https://api.anthropic.com/v1/organizations"
+            async with session.get(diag_url, headers=headers) as diag_resp:
+                diag_status = diag_resp.status
+                diag_text = await diag_resp.text()
+                key_preview = admin_key[:20] + "..." if len(admin_key) > 20 else admin_key
+                if diag_status != 200:
+                    return {
+                        "cost": None,
+                        "error": f"Admin API キー検証失敗 (HTTP {diag_status}): key={key_preview}, resp={diag_text[:150]}"
+                    }
+
+            # コスト取得
+            cost_url = "https://api.anthropic.com/v1/organizations/cost_report"
             total_cost_cents = 0.0
             page = None
 
             while True:
-                # デバッグ: starting_at のみで送信（ending_at, bucket_width 完全省略）
-                req_params = {"starting_at": start_iso}
+                req_params = {
+                    "starting_at": start_iso,
+                    "ending_at": end_iso,
+                    "bucket_width": "1d",
+                }
                 if page:
                     req_params["page"] = page
 
-                async with session.get(base_url, headers=headers, params=req_params) as resp:
+                async with session.get(cost_url, headers=headers, params=req_params) as resp:
+                    # デバッグ: 実際の URL を記録
+                    actual_url = str(resp.url)
                     if resp.status == 401:
                         return {"cost": None, "error": "API認証エラー（Admin API Key を確認）"}
                     if resp.status == 403:
@@ -154,7 +172,7 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
                         return {"cost": None, "error": "レート制限。数分後に再試行"}
                     if resp.status != 200:
                         text = await resp.text()
-                        return {"cost": None, "error": f"HTTPエラー {resp.status}: {text[:200]}"}
+                        return {"cost": None, "error": f"HTTP {resp.status} | URL: {actual_url[:120]} | {text[:100]}"}
 
                     data = await resp.json()
 
