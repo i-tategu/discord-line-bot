@@ -4,37 +4,35 @@ OpenAI Costs API と Anthropic Cost Report API を非同期で呼び出す。
 
 OpenAI:    GET https://api.openai.com/v1/organization/costs
 Anthropic: GET https://api.anthropic.com/v1/organizations/cost_report
+
+注意: Anthropic API は完了した日のバケットのみ返す（当日分は翌日確定）。
+      ending_at を未来日にするとエラーになるため、省略して API にデフォルト（現在時刻）を使わせる。
 """
 import os
 import asyncio
 from datetime import datetime, timezone, timedelta
 
 import aiohttp
-from yarl import URL
 
 # タイムアウト（秒）
 REQUEST_TIMEOUT = 15
 
 
-def _get_period(period: str) -> tuple[str, str]:
+def _get_anthropic_start(period: str) -> str:
     """
-    期間を返す。
-    period: "today" → 今日 0:00 UTC 〜 翌日 0:00 UTC
-            "month" → 今月1日 0:00 UTC 〜 翌日 0:00 UTC
-    戻り値: (start_iso, end_iso) RFC 3339 形式
-    bucket_width=1d に対応するため、end は翌日0:00にする。
+    Anthropic API 用の starting_at を返す。
+    ending_at は省略（API が自動で現在時刻を使用）。
+
+    period: "today" → 昨日 0:00 UTC（当日バケットは未完了のため取得不可）
+            "month" → 今月1日 0:00 UTC
     """
     now = datetime.now(timezone.utc)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    # ending_at は exclusive（「この日時より前に終わるバケット」）なので
-    # bucket_width=1d の場合、今日のバケットを含めるには +2日 必要
-    end = today_start + timedelta(days=2)
     if period == "today":
-        start = today_start
+        # 当日のバケットは未完了でエラーになるため、昨日から取得
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
     else:  # month
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    fmt = "%Y-%m-%dT%H:%M:%SZ"
-    return start.strftime(fmt), end.strftime(fmt)
+    return start.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _get_period_unix(period: str) -> tuple[int, int]:
@@ -115,8 +113,10 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
     """
     Anthropic Cost Report API でコストを取得。
 
-    注意: amount は最小通貨単位（セント）の10進文字列。
-          例: "123.45" (USD) → $1.2345
+    注意:
+    - amount はセント単位の10進文字列（"123.45" → $1.2345）
+    - API は完了した日のバケットのみ返す（当日分は翌日確定）
+    - ending_at を未来日にするとエラーになるため省略
 
     Returns:
         {"cost": float|None, "error": str|None}
@@ -125,7 +125,7 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
     if not admin_key:
         return {"cost": None, "error": "環境変数 ANTHROPIC_ADMIN_API_KEY 未設定"}
 
-    start_iso, end_iso = _get_period(period)
+    start_iso = _get_anthropic_start(period)
 
     headers = {
         "x-api-key": admin_key,
@@ -135,19 +135,6 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
     try:
         timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            # まず API キーの有効性を確認（ワークスペース一覧）
-            diag_url = "https://api.anthropic.com/v1/organizations"
-            async with session.get(diag_url, headers=headers) as diag_resp:
-                diag_status = diag_resp.status
-                diag_text = await diag_resp.text()
-                key_preview = admin_key[:20] + "..." if len(admin_key) > 20 else admin_key
-                if diag_status != 200:
-                    return {
-                        "cost": None,
-                        "error": f"Admin API キー検証失敗 (HTTP {diag_status}): key={key_preview}, resp={diag_text[:150]}"
-                    }
-
-            # コスト取得
             cost_url = "https://api.anthropic.com/v1/organizations/cost_report"
             total_cost_cents = 0.0
             page = None
@@ -155,15 +142,12 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
             while True:
                 req_params = {
                     "starting_at": start_iso,
-                    "ending_at": end_iso,
                     "bucket_width": "1d",
                 }
                 if page:
                     req_params["page"] = page
 
                 async with session.get(cost_url, headers=headers, params=req_params) as resp:
-                    # デバッグ: 実際の URL を記録
-                    actual_url = str(resp.url)
                     if resp.status == 401:
                         return {"cost": None, "error": "API認証エラー（Admin API Key を確認）"}
                     if resp.status == 403:
@@ -172,7 +156,7 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
                         return {"cost": None, "error": "レート制限。数分後に再試行"}
                     if resp.status != 200:
                         text = await resp.text()
-                        return {"cost": None, "error": f"HTTP {resp.status} | URL: {actual_url[:120]} | {text[:100]}"}
+                        return {"cost": None, "error": f"HTTPエラー {resp.status}: {text[:200]}"}
 
                     data = await resp.json()
 

@@ -134,7 +134,7 @@ def _build_cost_embed(results: dict) -> discord.Embed:
         )
 
     fetched_at = now_jst.strftime("%Y-%m-%d %H:%M:%S JST")
-    embed.set_footer(text=f"取得時刻: {fetched_at}")
+    embed.set_footer(text=f"取得時刻: {fetched_at} | ※ Anthropic は前日確定分まで")
     return embed
 
 
