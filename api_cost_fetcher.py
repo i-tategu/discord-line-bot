@@ -10,6 +10,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 
 import aiohttp
+from yarl import URL
 
 # タイムアウト（秒）
 REQUEST_TIMEOUT = 15
@@ -139,11 +140,11 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
             page = None
 
             while True:
-                # URL を手動構築（aiohttp の params= だと : が %3A にエンコードされる問題を回避）
+                # yarl.URL(encoded=True) で : が %3A にエンコードされる問題を回避
                 query = f"starting_at={start_iso}&ending_at={end_iso}&bucket_width=1d"
                 if page:
                     query += f"&page={page}"
-                url = f"{base_url}?{query}"
+                url = URL(f"{base_url}?{query}", encoded=True)
 
                 async with session.get(url, headers=headers) as resp:
                     if resp.status == 401:
