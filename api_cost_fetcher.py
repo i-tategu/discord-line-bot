@@ -1,14 +1,17 @@
 """
 API コスト取得モジュール
-OpenAI Costs API と Anthropic Cost Report API を非同期で呼び出す。
+OpenAI Costs API / Anthropic Cost Report API / OpenClaw Discord スナップショットを非同期で取得。
 
 OpenAI:    GET https://api.openai.com/v1/organization/costs
 Anthropic: GET https://api.anthropic.com/v1/organizations/cost_report
+OpenClaw:  Discord #apiコスト チャンネルの JSON スナップショット（1時間ごと投稿）
 
 注意: Anthropic API は完了した日のバケットのみ返す（当日分は翌日確定）。
       ending_at を未来日にするとエラーになるため、省略して API にデフォルト（現在時刻）を使わせる。
 """
 import os
+import re
+import json
 import asyncio
 from datetime import datetime, timezone, timedelta
 
@@ -185,36 +188,128 @@ async def fetch_anthropic_cost(period: str = "today") -> dict:
         return {"cost": None, "error": f"予期しないエラー: {e}"}
 
 
-async def fetch_all_costs(period: str = "today") -> dict:
+def _parse_cost_snapshot(content: str) -> dict | None:
+    """Discord メッセージから OpenClaw コストJSONスナップショットをパース"""
+    match = re.search(r"```json\s*\n(.*?)\n```", content, re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(1))
+        if data.get("type") == "OPENCLAW_COST_SNAPSHOT":
+            return data
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    return None
+
+
+async def fetch_openclaw_costs(bot, period: str = "today") -> dict:
+    """
+    OpenClaw Bot が Discord #apiコスト チャンネルに投稿した
+    コストJSONスナップショットを読み取る。
+
+    OpenClaw は Google/Moonshot/Groq 等のトークンベースコストを
+    1時間ごとに JSON 形式で投稿している。
+
+    Returns:
+        {"providers": {name: {"cost": float, "calls": int}}, "total": float, "error": str|None}
+    """
+    guild_id = os.environ.get("OPENCLAW_GUILD_ID")
+    channel_id = os.environ.get("OPENCLAW_APICOST_CHANNEL_ID")
+
+    if not guild_id or not channel_id:
+        return {"providers": {}, "total": 0, "error": "OPENCLAW 環境変数未設定"}
+
+    try:
+        guild = bot.get_guild(int(guild_id))
+        if not guild:
+            return {"providers": {}, "total": 0, "error": "OpenClaw サーバー未接続"}
+
+        channel = guild.get_channel(int(channel_id))
+        if not channel:
+            return {"providers": {}, "total": 0, "error": "apiコスト チャンネル未発見"}
+
+        now = datetime.now(timezone.utc)
+        today_str = now.strftime("%Y-%m-%d")
+
+        if period == "today":
+            # 今日の最新スナップショットを取得
+            async for msg in channel.history(limit=50):
+                snapshot = _parse_cost_snapshot(msg.content)
+                if snapshot and snapshot.get("date") == today_str:
+                    return {
+                        "providers": snapshot.get("providers", {}),
+                        "total": snapshot.get("total", 0),
+                        "error": None,
+                    }
+            return {"providers": {}, "total": 0, "error": None}
+
+        else:  # month
+            # 今月の各日の最新スナップショットを集約
+            month_prefix = now.strftime("%Y-%m")
+            daily_snapshots: dict[str, dict] = {}
+
+            async for msg in channel.history(limit=500):
+                snapshot = _parse_cost_snapshot(msg.content)
+                if snapshot and snapshot.get("date", "").startswith(month_prefix):
+                    date = snapshot["date"]
+                    if date not in daily_snapshots:
+                        daily_snapshots[date] = snapshot
+
+            total_providers: dict[str, dict] = {}
+            grand_total = 0.0
+            for snap in daily_snapshots.values():
+                for provider, info in snap.get("providers", {}).items():
+                    if provider not in total_providers:
+                        total_providers[provider] = {"cost": 0.0, "calls": 0}
+                    total_providers[provider]["cost"] += info.get("cost", 0)
+                    total_providers[provider]["calls"] += info.get("calls", 0)
+                grand_total += snap.get("total", 0)
+
+            return {"providers": total_providers, "total": grand_total, "error": None}
+
+    except Exception as e:
+        return {"providers": {}, "total": 0, "error": f"OpenClaw取得エラー: {e}"}
+
+
+async def fetch_all_costs(period: str = "today", bot=None) -> dict:
     """
     全ての自動取得可能な API のコストを並列取得。
 
     Args:
         period: "today" | "month"
+        bot: Discord Bot インスタンス（OpenClaw コスト取得用）
 
     Returns:
         {
             "openai": {"cost": float|None, "error": str|None},
             "anthropic": {"cost": float|None, "error": str|None},
+            "openclaw": {"providers": {...}, "total": float, "error": str|None},
             "period": "today" | "month",
             "fetched_at": "2026-02-06T14:23:45+00:00",
         }
     """
-    openai_result, anthropic_result = await asyncio.gather(
-        fetch_openai_cost(period),
-        fetch_anthropic_cost(period),
-        return_exceptions=True,
-    )
+    tasks = [fetch_openai_cost(period), fetch_anthropic_cost(period)]
+    if bot:
+        tasks.append(fetch_openclaw_costs(bot, period))
+
+    results_list = await asyncio.gather(*tasks, return_exceptions=True)
+
+    openai_result = results_list[0]
+    anthropic_result = results_list[1]
+    openclaw_result = results_list[2] if len(results_list) > 2 else {"providers": {}, "total": 0, "error": "Bot未接続"}
 
     # gather が例外を返した場合の処理
     if isinstance(openai_result, Exception):
         openai_result = {"cost": None, "error": str(openai_result)}
     if isinstance(anthropic_result, Exception):
         anthropic_result = {"cost": None, "error": str(anthropic_result)}
+    if isinstance(openclaw_result, Exception):
+        openclaw_result = {"providers": {}, "total": 0, "error": str(openclaw_result)}
 
     return {
         "openai": openai_result,
         "anthropic": anthropic_result,
+        "openclaw": openclaw_result,
         "period": period,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }

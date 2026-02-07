@@ -66,7 +66,7 @@ def _build_api_list_embed() -> discord.Embed:
             inline=False,
         )
 
-    embed.set_footer(text="ボタンを押すと OpenAI / Anthropic のコストを取得します")
+    embed.set_footer(text="ボタンを押すと OpenAI / Anthropic / OpenClaw のコストを取得します")
     return embed
 
 
@@ -89,33 +89,68 @@ def _build_cost_embed(results: dict) -> discord.Embed:
         color=0x2ECC71,
     )
 
-    # 自動取得結果
+    # --- 自動取得結果（Billing API） ---
     total = 0.0
-    cost_lines = []
+    billing_lines = []
 
     # OpenAI
     openai = results.get("openai", {})
     if openai.get("error"):
-        cost_lines.append(f"🤖 **OpenAI API**: ❌ {openai['error']}")
+        billing_lines.append(f"🤖 **OpenAI API**: ❌ {openai['error']}")
     else:
         cost = openai.get("cost", 0) or 0
         total += cost
-        cost_lines.append(f"🤖 **OpenAI API**: ${cost:.4f}")
+        billing_lines.append(f"🤖 **OpenAI API**: ${cost:.4f}")
 
     # Anthropic
     anthropic = results.get("anthropic", {})
     if anthropic.get("error"):
-        cost_lines.append(f"🤖 **Anthropic API**: ❌ {anthropic['error']}")
+        billing_lines.append(f"🤖 **Anthropic API**: ❌ {anthropic['error']}")
     else:
         cost = anthropic.get("cost", 0) or 0
         total += cost
-        cost_lines.append(f"🤖 **Anthropic API**: ${cost:.4f}")
-
-    cost_lines.append(f"\n**合計: ${total:.4f}**")
+        billing_lines.append(f"🤖 **Anthropic API**: ${cost:.4f}")
 
     embed.add_field(
-        name="🔄 自動取得",
-        value="\n".join(cost_lines),
+        name="🔄 Billing API",
+        value="\n".join(billing_lines),
+        inline=False,
+    )
+
+    # --- OpenClaw 経由（トークン推定） ---
+    openclaw = results.get("openclaw", {})
+    openclaw_lines = []
+
+    PROVIDER_DISPLAY = {
+        "google": ("🔷", "Google Gemini"),
+        "moonshot": ("🌙", "Moonshot (Kimi)"),
+        "groq": ("⚡", "Groq"),
+        "claude-cli": ("🤖", "Claude CLI (サブスク)"),
+    }
+
+    if openclaw.get("error"):
+        openclaw_lines.append(f"❌ {openclaw['error']}")
+    else:
+        providers = openclaw.get("providers", {})
+        for key, (icon, name) in PROVIDER_DISPLAY.items():
+            if key in providers:
+                cost = providers[key].get("cost", 0)
+                calls = providers[key].get("calls", 0)
+                total += cost
+                openclaw_lines.append(f"{icon} **{name}**: ${cost:.4f} ({calls}回)")
+        if not openclaw_lines:
+            openclaw_lines.append("データなし（OpenClaw 未稼働 or 使用ゼロ）")
+
+    embed.add_field(
+        name="📡 OpenClaw（トークン推定）",
+        value="\n".join(openclaw_lines),
+        inline=False,
+    )
+
+    # --- 合計 ---
+    embed.add_field(
+        name="💰 合計",
+        value=f"**${total:.4f}**",
         inline=False,
     )
 
@@ -134,7 +169,7 @@ def _build_cost_embed(results: dict) -> discord.Embed:
         )
 
     fetched_at = now_jst.strftime("%Y-%m-%d %H:%M:%S JST")
-    embed.set_footer(text=f"取得時刻: {fetched_at} | ※ Anthropic は前日確定分まで")
+    embed.set_footer(text=f"取得時刻: {fetched_at} | ※ Anthropic: 前日確定分 / OpenClaw: トークン推定")
     return embed
 
 
@@ -167,7 +202,7 @@ class APICostView(discord.ui.View):
         await interaction.response.defer()
 
         try:
-            results = await fetch_all_costs(period)
+            results = await fetch_all_costs(period, bot=interaction.client)
             embed = _build_cost_embed(results)
             await interaction.followup.send(embed=embed)
         except Exception as e:

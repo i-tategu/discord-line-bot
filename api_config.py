@@ -92,7 +92,7 @@ API_LIST = [
         "pricing": "従量",
         "docs_url": "https://platform.moonshot.cn/",
         "dashboard_url": "https://platform.moonshot.cn/console",
-        "cost_tracking": "manual",
+        "cost_tracking": "auto",
         "icon": "🌙",
     },
     {
@@ -122,7 +122,7 @@ API_LIST = [
         "pricing": "無料枠/従量",
         "docs_url": "https://aistudio.google.com/",
         "dashboard_url": "https://aistudio.google.com/",
-        "cost_tracking": "manual",
+        "cost_tracking": "auto",
         "icon": "🔷",
     },
     {
