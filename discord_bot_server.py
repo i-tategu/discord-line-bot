@@ -437,16 +437,20 @@ async def on_ready():
     except Exception as e:
         print(f"[WARN] Failed to sync commands to EC guild: {e}")
 
-    # 開発ログサーバーにもコマンドを同期（環境変数があれば）
-    dev_log_guild_id = os.environ.get("DEV_LOG_GUILD_ID")
-    if dev_log_guild_id:
-        try:
-            dev_guild = discord.Object(id=int(dev_log_guild_id))
-            bot.tree.copy_global_to(guild=dev_guild)
-            await bot.tree.sync(guild=dev_guild)
-            print("[OK] Slash commands synced to dev log guild")
-        except Exception as e:
-            print(f"[WARN] Failed to sync commands to dev log guild: {e}")
+    # 追加サーバーにもコマンドを同期（環境変数があれば）
+    for env_key, label in [
+        ("DEV_LOG_GUILD_ID", "dev log"),
+        ("OPENCLAW_GUILD_ID", "OpenClaw"),
+    ]:
+        extra_guild_id = os.environ.get(env_key)
+        if extra_guild_id:
+            try:
+                extra_guild = discord.Object(id=int(extra_guild_id))
+                bot.tree.copy_global_to(guild=extra_guild)
+                await bot.tree.sync(guild=extra_guild)
+                print(f"[OK] Slash commands synced to {label} guild")
+            except Exception as e:
+                print(f"[WARN] Failed to sync commands to {label} guild: {e}")
 
     await update_overview_channel()
     print("[OK] Overview channel updated")
