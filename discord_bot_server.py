@@ -592,10 +592,53 @@ async def on_interaction(interaction: discord.Interaction):
         order_id = custom_id.replace("b2_copy_", "")
         await handle_b2_copy(interaction, order_id)
 
+    # B2自動入力ボタン（キューセット）
+    elif custom_id.startswith("b2_autofill_"):
+        order_id = custom_id.replace("b2_autofill_", "")
+        await handle_b2_autofill(interaction, order_id)
+
     # 発送完了ボタン
     elif custom_id.startswith("shipped_"):
         order_id = custom_id.replace("shipped_", "")
         await handle_shipped(interaction, order_id)
+
+
+async def handle_b2_autofill(interaction: discord.Interaction, order_id: str):
+    """B2自動入力キューをセット（Tampermonkeyがポーリングで検出）"""
+    await interaction.response.defer(ephemeral=True)
+
+    wc_url = get_wc_url()
+    if not wc_url:
+        await interaction.followup.send("WC_URL設定がありません", ephemeral=True)
+        return
+
+    try:
+        url = f"{wc_url}/wp-json/i-tategu/v1/b2-queue"
+        shipping_token = os.environ.get("SHIPPING_API_TOKEN", "itg_ship_2026")
+        response = requests.post(
+            url,
+            json={"order_id": order_id},
+            headers={
+                "X-Shipping-Token": shipping_token,
+                "Content-Type": "application/json",
+            }
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success"):
+                await interaction.followup.send(
+                    f"✅ 注文 #{order_id} をB2自動入力キューにセットしました\n"
+                    f"B2クラウドのかんたん発行画面を開いていれば、2秒以内に自動入力されます。",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(f"キュー設定失敗: {data}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"API呼び出し失敗: {response.status_code}", ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(f"エラー: {e}", ephemeral=True)
 
 
 async def handle_b2_copy(interaction: discord.Interaction, order_id: str):
