@@ -1329,7 +1329,11 @@ def woo_webhook():
     order_status = data.get("status", "")
     print(f"[Webhook] Received order #{order_id} (status: {order_status}) from {webhook_source}")
 
-    # 顧客一覧に追加（全ステータスで追加、重複は自動スキップ）
+    # 顧客一覧に追加（processing以降のみ＝決済完了後）
+    if order_status not in ("processing", "design-confirmed", "produced", "shipped", "completed"):
+        print(f"[Webhook] Skipping customer add - status '{order_status}' not paid yet")
+        return jsonify({"status": "skipped", "reason": f"Order status '{order_status}' not ready"})
+
     try:
         billing = data.get("billing", {})
         customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}".strip()
