@@ -247,6 +247,35 @@ def get_all_customers_grouped():
     return grouped
 
 
+def delete_customer_by_order(order_id):
+    """注文IDで顧客を削除（注文が1件なら顧客ごと、複数なら該当注文のみ削除）"""
+    customers = load_customers()
+    target_key = None
+
+    for key, data in customers.items():
+        for order in data.get("orders", []):
+            if str(order["order_id"]) == str(order_id):
+                target_key = key
+                break
+        if target_key:
+            break
+
+    if not target_key:
+        return False
+
+    orders = customers[target_key].get("orders", [])
+    if len(orders) <= 1:
+        del customers[target_key]
+    else:
+        customers[target_key]["orders"] = [
+            o for o in orders if str(o["order_id"]) != str(order_id)
+        ]
+        customers[target_key]["updated_at"] = datetime.now().isoformat()
+
+    save_customers(customers)
+    return True
+
+
 def get_status_summary():
     """ステータス別サマリー取得"""
     grouped = get_all_customers_grouped()

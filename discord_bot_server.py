@@ -24,7 +24,8 @@ from customer_manager import (
     CustomerStatus, STATUS_CONFIG,
     add_customer, add_order_customer, update_customer_status, get_customer,
     get_customer_by_channel, get_customer_by_order,
-    get_status_summary, get_all_customers_grouped, load_customers
+    get_status_summary, get_all_customers_grouped, load_customers,
+    delete_customer_by_order
 )
 
 # 商品登録モジュール
@@ -1258,6 +1259,15 @@ def api_add_customer():
     asyncio.run_coroutine_threadsafe(update_overview_channel(), bot.loop)
 
     return jsonify({"success": True, "customer": customer})
+
+
+@api.route("/api/customer/order/<order_id>", methods=["DELETE"])
+def api_delete_customer_by_order(order_id):
+    """注文IDで顧客削除API"""
+    if delete_customer_by_order(order_id):
+        asyncio.run_coroutine_threadsafe(update_overview_channel(), bot.loop)
+        return jsonify({"success": True, "deleted_order": order_id})
+    return jsonify({"error": "Order not found"}), 404
 
 
 @api.route("/api/overview", methods=["GET"])
