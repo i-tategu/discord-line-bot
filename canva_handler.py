@@ -2039,6 +2039,117 @@ def mark_order_processed(order_id, design_url, wc_url, wc_key, wc_secret):
         return False
 
 
+def create_atelier_thread(order_data, order, design, bot_token, config):
+    """#Atelier対応 フォーラムにスレッドを作成し、アトリエトークンをWooCommerceに保存"""
+    atelier_forum_id = os.environ.get("DISCORD_FORUM_ATELIER", "1472857095031488524")
+    if not atelier_forum_id or not bot_token:
+        print("[Atelier] Forum ID or bot token not configured")
+        return None
+
+    order_id = order_data['order_id']
+    billing = order.get('billing', {}) if order else {}
+    customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}".strip()
+    groom = order_data['sim_data'].get('groomName', '')
+    bride = order_data['sim_data'].get('brideName', '')
+
+    # 商品名
+    product_name = ''
+    if order:
+        for item in order.get('line_items', []):
+            product_name = item.get('name', '')
+            break
+
+    # アトリエトークン生成 & WooCommerce に保存
+    import string
+    import random
+    token_chars = string.ascii_letters + string.digits
+    atelier_token = ''.join(random.choices(token_chars, k=32))
+
+    try:
+        wc_url = f"{config['wc_url']}/wp-json/wc/v3/orders/{order_id}?consumer_key={config['wc_key']}&consumer_secret={config['wc_secret']}"
+        resp = requests.put(wc_url, json={
+            "meta_data": [
+                {"key": "_atelier_token", "value": atelier_token},
+            ]
+        })
+        if resp.status_code == 200:
+            print(f"[Atelier] Token saved for order #{order_id}")
+        else:
+            print(f"[Atelier] Token save failed: {resp.status_code}")
+            return None
+    except Exception as e:
+        print(f"[Atelier] Token save error: {e}")
+        return None
+
+    atelier_url = f"{config['wc_url']}/atelier/?order={order_id}&token={atelier_token}"
+    edit_url = design.get('urls', {}).get('edit_url', '') if design else ''
+
+    thread_name = f"🎨 #{order_id} {customer_name} 様"
+
+    embed = {
+        "title": f"注文 #{order_id}",
+        "description": (
+            f"**お客様**: {customer_name}\n"
+            f"**新郎新婦**: {groom} & {bride}\n"
+            f"**商品**: {product_name}\n"
+            f"**挙式日**: {order_data.get('wedding_date', 'N/A')}"
+        ),
+        "color": 0xC5A96A,
+        "fields": [
+            {"name": "🎨 アトリエURL", "value": atelier_url, "inline": False},
+        ],
+        "footer": {"text": "お客様がアトリエページからメッセージを送ると、ここに通知されます"},
+    }
+
+    if edit_url:
+        embed["fields"].append({"name": "🖌️ Canva", "value": f"[デザインを編集]({edit_url})", "inline": False})
+
+    # サムネイル
+    if order:
+        for item in order.get('line_items', []):
+            image_url = item.get('image', {}).get('src', '')
+            if image_url:
+                embed['thumbnail'] = {'url': image_url}
+                break
+
+    url = f"https://discord.com/api/v10/channels/{atelier_forum_id}/threads"
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "name": thread_name[:100],
+        "message": {
+            "embeds": [embed],
+        },
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
+        if response.status_code in [200, 201]:
+            data = response.json()
+            thread_id = data.get('id')
+
+            # スレッドIDをWooCommerceに保存
+            try:
+                requests.put(
+                    f"{config['wc_url']}/wp-json/wc/v3/orders/{order_id}?consumer_key={config['wc_key']}&consumer_secret={config['wc_secret']}",
+                    json={"meta_data": [{"key": "_atelier_discord_thread_id", "value": thread_id}]}
+                )
+            except Exception:
+                pass
+
+            print(f"[Atelier] Thread created: {thread_id} for order #{order_id}")
+            return thread_id
+        else:
+            print(f"[Atelier] Thread creation failed: {response.status_code} {response.text[:300]}")
+            return None
+    except Exception as e:
+        print(f"[Atelier] Thread creation error: {e}")
+        return None
+
+
 def process_order(order_id, config):
     """
     注文を処理してCanvaデザインを作成
@@ -2127,6 +2238,11 @@ def process_order(order_id, config):
             # ③ 発送管理（サイレント）→ メッセージID取得
             shipping_msg_id = send_shipping_notification(order_data, order, bot_token)
 
+            # ⑤ アトリエ（#Atelier対応 フォーラムにスレッド作成）
+            atelier_thread_id = create_atelier_thread(order_data, order, design, bot_token, config)
+            if atelier_thread_id:
+                print(f"[Canva] Atelier thread created: {atelier_thread_id}")
+
             # ④ 管理者LINE通知（通知あり）
             line_token = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', '')
             admin_line_id = os.environ.get('ADMIN_LINE_USER_ID', '')
@@ -2139,14 +2255,19 @@ def process_order(order_id, config):
             guild_id = os.environ.get("DISCORD_GUILD_ID", "1462312636216508530")
             notify_ch = os.environ.get("DISCORD_PURCHASE_NOTIFY_CHANNEL", "1462313247096045743")
             shipping_ch = DISCORD_SHIPPING_CHANNEL_ID
+            atelier_forum_ch = os.environ.get("DISCORD_FORUM_ATELIER", "1472857095031488524")
 
             if notify_msg_id and shipping_msg_id and bot_token:
-                # ① → ③へのリンク
+                # ① → ③ + ⑤ へのリンク
                 notify_links = f"[📦 発送管理](https://discord.com/channels/{guild_id}/{shipping_ch}/{shipping_msg_id})"
+                if atelier_thread_id:
+                    notify_links += f"\n[🎨 アトリエ](https://discord.com/channels/{guild_id}/{atelier_thread_id})"
                 add_cross_links_to_message(bot_token, notify_ch, notify_msg_id, notify_links)
 
-                # ③ → ①へのリンク
+                # ③ → ① + ⑤ へのリンク
                 shipping_links = f"[🛒 注文通知](https://discord.com/channels/{guild_id}/{notify_ch}/{notify_msg_id})"
+                if atelier_thread_id:
+                    shipping_links += f"\n[🎨 アトリエ](https://discord.com/channels/{guild_id}/{atelier_thread_id})"
                 add_cross_links_to_message(bot_token, shipping_ch, shipping_msg_id, shipping_links)
 
                 print(f"[Canva] Cross-links established between notifications")

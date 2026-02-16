@@ -24,8 +24,7 @@ from customer_manager import (
     CustomerStatus, STATUS_CONFIG,
     add_customer, add_order_customer, update_customer_status, get_customer,
     get_customer_by_channel, get_customer_by_order,
-    get_status_summary, get_all_customers_grouped, load_customers,
-    delete_customer_by_order
+    get_status_summary, get_all_customers_grouped, load_customers
 )
 
 # 商品登録モジュール
@@ -81,6 +80,15 @@ def get_forum_completed():
 
 def get_forum_line():
     return os.environ.get("DISCORD_FORUM_LINE", "1463460598493745225")
+
+def get_forum_atelier():
+    return os.environ.get("DISCORD_FORUM_ATELIER", "1472857095031488524")
+
+def get_atelier_webhook_url():
+    return os.environ.get("ATELIER_WEBHOOK_URL", "https://i-tategu-shop.com/wp-json/i-tategu/v1/atelier/webhook")
+
+def get_atelier_webhook_secret():
+    return os.environ.get("ATELIER_WEBHOOK_SECRET", "")
 
 def get_canva_access_token():
     access, _ = get_current_tokens()
@@ -458,6 +466,59 @@ async def on_ready():
     print("=" * 50)
 
 
+async def handle_atelier_message(message):
+    """#atelier フォーラムのメッセージをWordPress webhook に転送"""
+    # スレッド名から注文番号を取得（例: "🎨 #1865 はるか 様"）
+    thread_name = message.channel.name
+    order_match = re.search(r'#(\d+)', thread_name)
+    if not order_match:
+        print(f"[Atelier] Could not extract order ID from thread: {thread_name}")
+        return
+
+    order_id = order_match.group(1)
+    webhook_url = get_atelier_webhook_url()
+    secret = get_atelier_webhook_secret()
+
+    if not webhook_url or not secret:
+        print("[Atelier] Webhook URL or secret not configured")
+        return
+
+    # テキストメッセージ
+    text = message.content if message.content and not message.content.startswith("!") else ""
+
+    # 画像URL（最初の画像添付のみ）
+    image_url = ""
+    for attachment in message.attachments:
+        if attachment.content_type and attachment.content_type.startswith("image/"):
+            image_url = attachment.url
+            break
+
+    if not text and not image_url:
+        return
+
+    payload = {
+        "order_id": int(order_id),
+        "message": text,
+        "image_url": image_url,
+    }
+
+    try:
+        resp = requests.post(webhook_url, json=payload, headers={
+            "X-Atelier-Secret": secret,
+            "Content-Type": "application/json",
+        }, timeout=10)
+
+        if resp.status_code == 200:
+            await message.add_reaction("✅")
+            print(f"[Atelier] Forwarded to WP: order={order_id}")
+        else:
+            await message.add_reaction("❌")
+            print(f"[Atelier] WP webhook failed: {resp.status_code} {resp.text}")
+    except Exception as e:
+        await message.add_reaction("❌")
+        print(f"[Atelier] Webhook error: {e}")
+
+
 @bot.event
 async def on_error(event, *args, **kwargs):
     """エラーログ"""
@@ -501,6 +562,12 @@ async def on_message(message):
         return
 
     await bot.process_commands(message)
+
+    # ── #atelier フォーラムスレッド → WordPress webhook 転送 ──
+    if isinstance(message.channel, discord.Thread) and get_forum_atelier():
+        if str(message.channel.parent_id) == str(get_forum_atelier()):
+            await handle_atelier_message(message)
+            return  # LINE転送は不要
 
     line_user_id = None
 
@@ -1261,15 +1328,6 @@ def api_add_customer():
     return jsonify({"success": True, "customer": customer})
 
 
-@api.route("/api/customer/order/<order_id>", methods=["DELETE"])
-def api_delete_customer_by_order(order_id):
-    """注文IDで顧客削除API"""
-    if delete_customer_by_order(order_id):
-        asyncio.run_coroutine_threadsafe(update_overview_channel(), bot.loop)
-        return jsonify({"success": True, "deleted_order": order_id})
-    return jsonify({"error": "Order not found"}), 404
-
-
 @api.route("/api/overview", methods=["GET"])
 def api_get_overview():
     """一覧取得API"""
@@ -1329,11 +1387,7 @@ def woo_webhook():
     order_status = data.get("status", "")
     print(f"[Webhook] Received order #{order_id} (status: {order_status}) from {webhook_source}")
 
-    # 顧客一覧に追加（processing以降のみ＝決済完了後）
-    if order_status not in ("processing", "design-confirmed", "produced", "shipped", "completed"):
-        print(f"[Webhook] Skipping customer add - status '{order_status}' not paid yet")
-        return jsonify({"status": "skipped", "reason": f"Order status '{order_status}' not ready"})
-
+    # 顧客一覧に追加（全ステータスで追加、重複は自動スキップ）
     try:
         billing = data.get("billing", {})
         customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}".strip()
