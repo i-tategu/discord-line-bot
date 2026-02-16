@@ -101,6 +101,7 @@ Y_OFFSET = (SLIDE_HEIGHT_PX - SIMULATOR_ASPECT_HEIGHT) / 2  # = 125px
 
 # フォントマッピング
 FONT_MAP = {
+    # 筆記体（Script）
     'Alex Brush': 'Alex Brush',
     'Great Vibes': 'Great Vibes',
     'Pinyon Script': 'Pinyon Script',
@@ -110,6 +111,18 @@ FONT_MAP = {
     'Allura': 'Allura',
     'Satisfy': 'Satisfy',
     'Rouge Script': 'Rouge Script',
+    'Tangerine': 'Tangerine',
+    # セリフ（Serif）
+    'Cormorant Garamond': 'Cormorant Garamond',
+    'Playfair Display': 'Playfair Display',
+    'EB Garamond': 'EB Garamond',
+    'Lora': 'Lora',
+    'Crimson Text': 'Crimson Text',
+    # サンセリフ（Sans-serif）
+    'Montserrat': 'Montserrat',
+    'Raleway': 'Raleway',
+    'Josefin Sans': 'Josefin Sans',
+    'Lato': 'Lato',
     # 日本語フォント（人気）
     'Shippori Mincho': 'Shippori Mincho',
     'Zen Old Mincho': 'Zen Old Mincho',
@@ -118,6 +131,7 @@ FONT_MAP = {
     'Zen Maru Gothic': 'Zen Maru Gothic',
     'Sawarabi Mincho': 'Sawarabi Mincho',
     'Noto Sans JP': 'Noto Sans JP',
+    'Hina Mincho': 'Hina Mincho',
     # 日本語フォント（個性派）
     'Yomogi': 'Yomogi',
     'Kaisei Decol': 'Kaisei Decol',
