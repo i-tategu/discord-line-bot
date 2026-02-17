@@ -742,7 +742,7 @@ def create_pptx(order_data, temp_dir):
 
     if sim_image:
         try:
-            temp_img_path = os.path.join(temp_dir, f"sim_{order_data['order_id']}.jpg")
+            temp_img_path = os.path.join(temp_dir, f"sim_{order_data['order_id']}.png")
 
             # 画像データを取得
             if sim_image.startswith('http'):
@@ -755,7 +755,7 @@ def create_pptx(order_data, temp_dir):
                 img_data = base64.b64decode(sim_image)
                 img = Image.open(BytesIO(img_data))
 
-            # 圧縮: RGBA→RGB変換、リサイズ
+            # RGBA→RGB変換（PPTX互換性のため）
             if img.mode == 'RGBA':
                 white_bg = Image.new('RGB', img.size, (255, 255, 255))
                 white_bg.paste(img, mask=img.split()[3])
@@ -763,15 +763,15 @@ def create_pptx(order_data, temp_dir):
             elif img.mode != 'RGB':
                 img = img.convert('RGB')
 
-            # 最大800pxにリサイズ
-            max_size = 800
+            # 最大1600pxにリサイズ（高品質維持）
+            max_size = 1600
             if max(img.size) > max_size:
                 ratio = max_size / max(img.size)
                 new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
                 img = img.resize(new_size, Image.LANCZOS)
 
-            # JPEGで保存
-            img.save(temp_img_path, 'JPEG', quality=80, optimize=True)
+            # PNGで保存（画質劣化なし）
+            img.save(temp_img_path, 'PNG', optimize=True)
             print(f"[IMG] Sim image: {os.path.getsize(temp_img_path) / 1024:.1f}KB")
 
             img = Image.open(temp_img_path)
@@ -842,7 +842,7 @@ def create_pptx(order_data, temp_dir):
 
         if back_sim_image:
             try:
-                temp_back_img_path = os.path.join(temp_dir, f"sim_back_{order_data['order_id']}.jpg")
+                temp_back_img_path = os.path.join(temp_dir, f"sim_back_{order_data['order_id']}.png")
                 if back_sim_image.startswith('http'):
                     response = requests.get(back_sim_image, timeout=30)
                     response.raise_for_status()
@@ -860,13 +860,13 @@ def create_pptx(order_data, temp_dir):
                 elif img.mode != 'RGB':
                     img = img.convert('RGB')
 
-                max_size = 800
+                max_size = 1600
                 if max(img.size) > max_size:
                     ratio = max_size / max(img.size)
                     new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
                     img = img.resize(new_size, Image.LANCZOS)
 
-                img.save(temp_back_img_path, 'JPEG', quality=80, optimize=True)
+                img.save(temp_back_img_path, 'PNG', optimize=True)
                 print(f"[IMG] Back sim image: {os.path.getsize(temp_back_img_path) / 1024:.1f}KB")
 
                 img = Image.open(temp_back_img_path)
