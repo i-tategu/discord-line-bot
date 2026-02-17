@@ -24,7 +24,8 @@ from customer_manager import (
     CustomerStatus, STATUS_CONFIG,
     add_customer, add_order_customer, update_customer_status, get_customer,
     get_customer_by_channel, get_customer_by_order,
-    get_status_summary, get_all_customers_grouped, load_customers
+    get_status_summary, get_all_customers_grouped, load_customers,
+    get_linked_users_by_order, update_linked_customer_statuses
 )
 
 # 商品登録モジュール
@@ -172,6 +173,19 @@ def get_line_user_id_from_thread(thread_id):
         if str(data.get('thread_id')) == str(thread_id):
             return line_user_id
     return None
+
+
+def get_all_line_users_from_thread(thread_id):
+    """スレッドIDから全LINE User IDと表示名を取得（複数ユーザー対応）"""
+    thread_map = load_thread_map()
+    users = []
+    for line_user_id, data in thread_map.items():
+        if str(data.get('thread_id')) == str(thread_id):
+            users.append({
+                'line_user_id': line_user_id,
+                'display_name': data.get('display_name', '不明')
+            })
+    return users
 
 
 # テンプレート（DATA_DIRに保存版があればそちらを優先）
@@ -621,7 +635,24 @@ async def on_message(message):
         return
 
     print(f"[DEBUG] LINE User ID found: {line_user_id}")
-    # テキストメッセージ送信
+
+    # 複数LINEユーザー対応（夫婦連携）
+    if isinstance(message.channel, discord.Thread) and str(message.channel.parent_id) == str(get_forum_line()):
+        all_line_users = get_all_line_users_from_thread(message.channel.id)
+        if len(all_line_users) > 1:
+            has_content = message.content and not message.content.startswith("!")
+            attachment_data = [
+                {'url': att.url, 'content_type': att.content_type}
+                for att in message.attachments
+                if att.content_type and att.content_type.startswith("image/")
+            ]
+            if has_content or attachment_data:
+                view = ReplyTargetView(all_line_users, message.content if has_content else "", attachment_data)
+                names = " / ".join(u['display_name'] for u in all_line_users)
+                await message.reply(f"📨 送信先を選択してください（{names}）", view=view, mention_author=False)
+            return
+
+    # テキストメッセージ送信（単一ユーザー）
     if message.content and not message.content.startswith("!"):
         success = send_line_message(line_user_id, [
             {"type": "text", "text": message.content}
@@ -887,6 +918,59 @@ async def change_status(interaction: discord.Interaction, new_status: str):
     await update_overview_channel()
 
 
+@bot.tree.command(name="atelier-url", description="アトリエURLを表示")
+@app_commands.describe(order_id="注文番号")
+async def atelier_url(interaction: discord.Interaction, order_id: int):
+    """指定注文のアトリエURLを生成して表示"""
+    await interaction.response.defer(ephemeral=True)
+
+    wc_url = get_wc_url()
+    wc_key = get_wc_consumer_key()
+    wc_secret = get_wc_consumer_secret()
+
+    if not all([wc_url, wc_key, wc_secret]):
+        await interaction.followup.send("WooCommerce設定がありません", ephemeral=True)
+        return
+
+    try:
+        url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}"
+        response = requests.get(url, auth=(wc_key, wc_secret))
+        if response.status_code != 200:
+            await interaction.followup.send(f"注文 #{order_id} が見つかりません (HTTP {response.status_code})", ephemeral=True)
+            return
+
+        order = response.json()
+        meta = {m['key']: m['value'] for m in order.get('meta_data', [])}
+        atelier_token = meta.get('_atelier_token')
+
+        if not atelier_token:
+            await interaction.followup.send(
+                f"注文 #{order_id} にアトリエトークンがありません\n"
+                f"ステータス: {order.get('status', '不明')}\n"
+                f"※ トークンは processing/on-hold 時に自動生成されます",
+                ephemeral=True
+            )
+            return
+
+        atelier_url_str = f"{wc_url}/atelier/?order={order_id}&token={atelier_token}"
+        billing = order.get('billing', {})
+        customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}".strip()
+
+        embed = discord.Embed(
+            title=f"🎨 注文 #{order_id} のアトリエURL",
+            color=0xc5a96a
+        )
+        embed.add_field(name="お客様", value=customer_name or "不明", inline=True)
+        embed.add_field(name="ステータス", value=order.get('status', '不明'), inline=True)
+        embed.add_field(name="アトリエURL", value=atelier_url_str, inline=False)
+        embed.set_footer(text="このURLをインスタDM等でお客様にお送りください")
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(f"エラー: {e}", ephemeral=True)
+
+
 @bot.tree.command(name="overview", description="顧客一覧を更新")
 async def refresh_overview(interaction: discord.Interaction):
     """一覧更新コマンド"""
@@ -918,13 +1002,79 @@ async def register_customer(interaction: discord.Interaction):
 
 # ================== Template System ==================
 
+class ReplyTargetView(discord.ui.View):
+    """複数LINE宛先がある場合の送信先選択UI"""
+    def __init__(self, line_users, message_content, attachments=None):
+        super().__init__(timeout=120)
+        self.line_users = line_users
+        self.message_content = message_content
+        self.attachments = attachments or []
+
+        options = []
+        for user in line_users:
+            options.append(discord.SelectOption(
+                label=f"{user['display_name']}だけ",
+                value=user['line_user_id'],
+                description=f"{user['display_name']}様のみに送信"
+            ))
+        options.append(discord.SelectOption(
+            label="両方に送信",
+            value="__all__",
+            description="全員に送信",
+            default=True
+        ))
+
+        select = ReplyTargetSelect(options, line_users, message_content, attachments)
+        self.add_item(select)
+
+
+class ReplyTargetSelect(discord.ui.Select):
+    """送信先選択セレクトメニュー"""
+    def __init__(self, options, line_users, message_content, attachments):
+        super().__init__(placeholder="送信先を選択...", options=options)
+        self.line_users = line_users
+        self.message_content = message_content
+        self.attachments = attachments
+
+    async def callback(self, interaction: discord.Interaction):
+        selected = self.values[0]
+
+        if selected == "__all__":
+            targets = self.line_users
+        else:
+            targets = [u for u in self.line_users if u['line_user_id'] == selected]
+
+        results = []
+        for user in targets:
+            uid = user['line_user_id']
+            name = user['display_name']
+
+            if self.message_content:
+                success = send_line_message(uid, [{"type": "text", "text": self.message_content}])
+                results.append(f"{'✅' if success else '❌'} {name}")
+
+            for att in self.attachments:
+                if att.get('content_type', '').startswith("image/"):
+                    send_line_message(uid, [{
+                        "type": "image",
+                        "originalContentUrl": att['url'],
+                        "previewImageUrl": att['url']
+                    }])
+
+        target_names = ", ".join(u['display_name'] for u in targets)
+        await interaction.response.edit_message(
+            content=f"✅ {target_names}様に送信しました",
+            view=None
+        )
+
+
 class TemplateEditModal(discord.ui.Modal):
-    """テンプレート編集モーダル"""
-    def __init__(self, template, customer_name, order_id, line_user_id):
+    """テンプレート編集モーダル（複数ユーザー対応）"""
+    def __init__(self, template, customer_name, order_id, line_user_ids):
         self.template = template
         self.customer_name = customer_name
         self.order_id = order_id
-        self.line_user_id = line_user_id
+        self.line_user_ids = line_user_ids  # [{'line_user_id': ..., 'display_name': ...}]
 
         title = template["label"]
         if template.get("status_action"):
@@ -951,18 +1101,28 @@ class TemplateEditModal(discord.ui.Modal):
         message_text = self.message_input.value
         results = []
 
-        # 1. LINE送信
-        success = send_line_message(self.line_user_id, [
-            {"type": "text", "text": message_text}
-        ])
+        # 1. LINE送信（全ユーザーに送信）
+        all_success = True
+        sent_names = []
+        for user in self.line_user_ids:
+            success = send_line_message(user['line_user_id'], [
+                {"type": "text", "text": message_text}
+            ])
+            if success:
+                sent_names.append(user['display_name'])
+            else:
+                all_success = False
 
-        if not success:
+        if not sent_names:
             await interaction.followup.send("❌ LINE送信に失敗しました", ephemeral=True)
             return
 
-        results.append("✅ LINE送信完了")
+        if len(self.line_user_ids) > 1:
+            results.append(f"✅ LINE送信完了（{', '.join(sent_names)}）")
+        else:
+            results.append("✅ LINE送信完了")
 
-        # 2. WooCommerceステータス更新
+        # 2. WooCommerceステータス更新（一度だけ）
         status_action = self.template.get("status_action")
         if status_action and self.order_id:
             wc_url = get_wc_url()
@@ -980,11 +1140,12 @@ class TemplateEditModal(discord.ui.Modal):
                 except Exception as e:
                     results.append(f"⚠️ WooCommerceエラー: {e}")
 
-        # 3. customer_managerステータス更新
+        # 3. customer_managerステータス更新（全ユーザー）
         if status_action:
             try:
                 new_status = CustomerStatus(status_action)
-                update_customer_status(self.line_user_id, new_status, self.order_id)
+                for user in self.line_user_ids:
+                    update_customer_status(user['line_user_id'], new_status, self.order_id)
                 results.append("✅ 顧客ステータス更新")
             except ValueError:
                 pass
@@ -1034,7 +1195,11 @@ class TemplateEditModal(discord.ui.Modal):
             color=0x06C755
         )
         sent_embed.set_author(name=f"📤 {self.template['label']}")
-        sent_embed.set_footer(text=f"LINE送信済み • {datetime.now().strftime('%m/%d %H:%M')}")
+        if len(self.line_user_ids) > 1:
+            names = ", ".join(u['display_name'] for u in self.line_user_ids)
+            sent_embed.set_footer(text=f"LINE送信済み ({names}) • {datetime.now().strftime('%m/%d %H:%M')}")
+        else:
+            sent_embed.set_footer(text=f"LINE送信済み • {datetime.now().strftime('%m/%d %H:%M')}")
         await thread.send(embed=sent_embed)
 
         # 7. 顧客一覧を更新
@@ -1053,7 +1218,7 @@ class TemplatePersistentView(discord.ui.View):
         super().__init__(timeout=None)
 
     async def _handle_button(self, interaction: discord.Interaction, template_id: str):
-        """ボタン押下時の共通処理"""
+        """ボタン押下時の共通処理（複数ユーザー対応）"""
         templates = load_templates()
         template = next((t for t in templates if t["id"] == template_id), None)
         if not template:
@@ -1065,21 +1230,26 @@ class TemplatePersistentView(discord.ui.View):
             await interaction.response.send_message("スレッド内で使用してください", ephemeral=True)
             return
 
-        # LINE User ID取得
-        line_user_id = await find_line_user_id_in_thread(thread)
-        if not line_user_id:
-            await interaction.response.send_message("❌ LINE User IDが見つかりません", ephemeral=True)
-            return
+        # 全LINE User ID取得（複数ユーザー対応）
+        all_line_users = get_all_line_users_from_thread(thread.id)
+        if not all_line_users:
+            # フォールバック: 従来の方法で検索
+            line_user_id = await find_line_user_id_in_thread(thread)
+            if not line_user_id:
+                await interaction.response.send_message("❌ LINE User IDが見つかりません", ephemeral=True)
+                return
+            customer_name, order_id = get_thread_customer_info(thread)
+            all_line_users = [{'line_user_id': line_user_id, 'display_name': customer_name}]
 
         # 顧客情報取得
         customer_name, order_id = get_thread_customer_info(thread)
         if not order_id:
-            customer = get_customer(line_user_id)
+            customer = get_customer(all_line_users[0]['line_user_id'])
             if customer and customer.get("orders"):
                 order_id = str(customer["orders"][-1].get("order_id", ""))
 
-        # モーダル表示（編集可能）
-        modal = TemplateEditModal(template, customer_name, order_id, line_user_id)
+        # モーダル表示（全ユーザーに送信）
+        modal = TemplateEditModal(template, customer_name, order_id, all_line_users)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="① あいさつ", style=discord.ButtonStyle.secondary, custom_id="tpl_greeting", emoji="👋", row=0)

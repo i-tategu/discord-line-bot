@@ -247,35 +247,6 @@ def get_all_customers_grouped():
     return grouped
 
 
-def delete_customer_by_order(order_id):
-    """注文IDで顧客を削除（注文が1件なら顧客ごと、複数なら該当注文のみ削除）"""
-    customers = load_customers()
-    target_key = None
-
-    for key, data in customers.items():
-        for order in data.get("orders", []):
-            if str(order["order_id"]) == str(order_id):
-                target_key = key
-                break
-        if target_key:
-            break
-
-    if not target_key:
-        return False
-
-    orders = customers[target_key].get("orders", [])
-    if len(orders) <= 1:
-        del customers[target_key]
-    else:
-        customers[target_key]["orders"] = [
-            o for o in orders if str(o["order_id"]) != str(order_id)
-        ]
-        customers[target_key]["updated_at"] = datetime.now().isoformat()
-
-    save_customers(customers)
-    return True
-
-
 def get_status_summary():
     """ステータス別サマリー取得"""
     grouped = get_all_customers_grouped()
@@ -291,3 +262,23 @@ def get_status_summary():
             "color": config["color"],
         }
     return summary
+
+
+def get_linked_users_by_order(order_id):
+    """同じ注文IDに紐付けられた全顧客キーを取得"""
+    customers = load_customers()
+    linked = []
+    for customer_key, data in customers.items():
+        for order in data.get("orders", []):
+            if str(order["order_id"]) == str(order_id):
+                linked.append(customer_key)
+                break
+    return linked
+
+
+def update_linked_customer_statuses(order_id, new_status: CustomerStatus):
+    """同じ注文の全連動顧客のステータスを一括更新"""
+    linked_users = get_linked_users_by_order(order_id)
+    for user_key in linked_users:
+        update_customer_status(user_key, new_status, order_id)
+    return linked_users
