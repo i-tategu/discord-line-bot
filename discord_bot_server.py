@@ -114,8 +114,15 @@ def get_wc_consumer_secret():
 def get_woo_webhook_secret():
     return os.environ.get("WOO_WEBHOOK_SECRET", "")
 
+def get_instagram_page_token():
+    return os.environ.get("INSTAGRAM_PAGE_TOKEN", "")
+
+def get_instagram_app_secret():
+    return os.environ.get("INSTAGRAM_APP_SECRET", "")
+
 # スレッドマップファイル
 THREAD_MAP_FILE = os.path.join(os.path.dirname(__file__), "thread_map.json")
+INSTAGRAM_THREAD_MAP_FILE = os.path.join(os.path.dirname(__file__), "instagram_thread_map.json")
 
 # Flask API
 api = Flask(__name__)
@@ -186,6 +193,105 @@ def get_all_line_users_from_thread(thread_id):
                 'display_name': data.get('display_name', '不明')
             })
     return users
+
+
+def load_instagram_thread_map():
+    """Instagramスレッドマップを読み込み"""
+    if os.path.exists(INSTAGRAM_THREAD_MAP_FILE):
+        with open(INSTAGRAM_THREAD_MAP_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+
+def get_instagram_user_id_from_thread(thread_id):
+    """スレッドIDからInstagram User IDを取得"""
+    ig_map = load_instagram_thread_map()
+    for ig_user_id, data in ig_map.items():
+        if str(data.get('thread_id')) == str(thread_id):
+            return ig_user_id
+    return None
+
+
+def get_platform_from_thread(thread_id):
+    """スレッドIDからプラットフォームを判定（'line', 'instagram', None）"""
+    # LINE thread_map をチェック
+    line_map = load_thread_map()
+    for _, data in line_map.items():
+        if str(data.get('thread_id')) == str(thread_id):
+            return 'line'
+
+    # Instagram thread_map をチェック
+    ig_map = load_instagram_thread_map()
+    for _, data in ig_map.items():
+        if str(data.get('thread_id')) == str(thread_id):
+            return 'instagram'
+
+    return None
+
+
+def send_instagram_message(user_id, text):
+    """Instagram DM でテキストメッセージを送信"""
+    token = get_instagram_page_token()
+    if not token:
+        print("[IG] No INSTAGRAM_PAGE_TOKEN configured")
+        return False
+
+    url = "https://graph.instagram.com/v18.0/me/messages"
+    data = {
+        "recipient": {"id": user_id},
+        "message": {"text": text}
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+
+    try:
+        response = requests.post(url, json=data, headers=headers, timeout=10)
+        if response.status_code == 200:
+            print(f"[IG] Message sent to {user_id}")
+            return True
+        else:
+            print(f"[IG] Send failed: {response.status_code} {response.text}")
+            return False
+    except Exception as e:
+        print(f"[IG] Send error: {e}")
+        return False
+
+
+def send_instagram_image(user_id, image_url):
+    """Instagram DM で画像を送信"""
+    token = get_instagram_page_token()
+    if not token:
+        print("[IG] No INSTAGRAM_PAGE_TOKEN configured")
+        return False
+
+    url = "https://graph.instagram.com/v18.0/me/messages"
+    data = {
+        "recipient": {"id": user_id},
+        "message": {
+            "attachment": {
+                "type": "image",
+                "payload": {"url": image_url}
+            }
+        }
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+
+    try:
+        response = requests.post(url, json=data, headers=headers, timeout=10)
+        if response.status_code == 200:
+            print(f"[IG] Image sent to {user_id}")
+            return True
+        else:
+            print(f"[IG] Image send failed: {response.status_code} {response.text}")
+            return False
+    except Exception as e:
+        print(f"[IG] Image send error: {e}")
+        return False
 
 
 # テンプレート（DATA_DIRに保存版があればそちらを優先）
@@ -554,9 +660,12 @@ async def on_message(message):
     """Discordメッセージを監視してLINEに転送 + テンプレートボタン再投稿"""
     print(f"[MSG] channel={message.channel.name if hasattr(message.channel, 'name') else 'DM'}, author={message.author}, bot={message.author.bot}")
 
-    # LINE対応フォーラムスレッド内のメッセージ → テンプレートボタン再投稿
-    if isinstance(message.channel, discord.Thread) and get_forum_line():
-        if str(message.channel.parent_id) == str(get_forum_line()):
+    # LINE対応/アトリエ フォーラムスレッド内のメッセージ → テンプレートボタン再投稿
+    if isinstance(message.channel, discord.Thread):
+        parent_id = str(message.channel.parent_id)
+        is_line_forum = get_forum_line() and parent_id == str(get_forum_line())
+        is_atelier_forum = get_forum_atelier() and parent_id == str(get_forum_atelier())
+        if is_line_forum or is_atelier_forum:
             thread_key = str(message.channel.id)
             # 自分が投稿したボタンメッセージは無視（ループ防止）
             if message.id != _template_button_msg_ids.get(thread_key):
@@ -583,52 +692,92 @@ async def on_message(message):
             await handle_atelier_message(message)
             return  # LINE転送は不要
 
-    line_user_id = None
+    # ── #LINE対応 フォーラムスレッド → LINE / Instagram 転送 ──
+    if not (isinstance(message.channel, discord.Thread) and
+            message.channel.parent_id == int(get_forum_line())):
+        # フォーラムスレッド外 → 通常チャンネルからの転送（トピックにLINE User IDがあれば転送）
+        line_user_id = None
+        if hasattr(message.channel, 'topic'):
+            line_user_id = get_line_user_id_from_channel(message.channel)
+        if not line_user_id:
+            return
+        # 通常チャンネル → LINE 送信（従来互換）
+        if message.content and not message.content.startswith("!"):
+            success = send_line_message(line_user_id, [{"type": "text", "text": message.content}])
+            if success:
+                await message.add_reaction("✅")
+            else:
+                await message.add_reaction("❌")
+        for attachment in message.attachments:
+            if attachment.content_type and attachment.content_type.startswith("image/"):
+                send_line_message(line_user_id, [{
+                    "type": "image",
+                    "originalContentUrl": attachment.url,
+                    "previewImageUrl": attachment.url
+                }])
+        return
 
-    # フォーラムスレッドからの転送
-    if isinstance(message.channel, discord.Thread):
-        print(f"[DEBUG] Thread detected: parent_id={message.channel.parent_id}, get_forum_line()={get_forum_line()}")
-        if message.channel.parent_id == int(get_forum_line()):
-            line_user_id = get_line_user_id_from_thread(message.channel.id)
-            if not line_user_id:
-                starter = message.channel.starter_message
-                if starter:
-                    # バッククォートあり・なし両方に対応
-                    match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', starter.content)
+    # ── フォーラムスレッド内: プラットフォーム判定 ──
+    thread_id = message.channel.id
+    platform = get_platform_from_thread(thread_id)
+    print(f"[DEBUG] Thread {thread_id}: platform={platform}")
+
+    # ── Instagram スレッドの場合 ──
+    if platform == 'instagram':
+        ig_user_id = get_instagram_user_id_from_thread(thread_id)
+        if not ig_user_id:
+            print(f"[DEBUG] No Instagram User ID found for thread: {thread_id}")
+            return
+
+        # テキスト送信
+        if message.content and not message.content.startswith("!"):
+            success = send_instagram_message(ig_user_id, message.content)
+            if success:
+                await message.add_reaction("✅")
+            else:
+                await message.add_reaction("❌")
+
+        # 画像送信
+        for attachment in message.attachments:
+            if attachment.content_type and attachment.content_type.startswith("image/"):
+                success = send_instagram_image(ig_user_id, attachment.url)
+                if success:
+                    await message.add_reaction("🖼️")
+        return
+
+    # ── LINE スレッドの場合（従来ロジック）──
+    line_user_id = get_line_user_id_from_thread(thread_id)
+    if not line_user_id:
+        starter = message.channel.starter_message
+        if starter:
+            match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', starter.content)
+            if match:
+                line_user_id = match.group(1)
+
+        if not line_user_id:
+            async for msg in message.channel.history(limit=5, oldest_first=True):
+                if msg.content:
+                    match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', msg.content)
                     if match:
                         line_user_id = match.group(1)
+                        print(f"[DEBUG] Found LINE User ID in content: {line_user_id}")
+                        break
 
-                # starter_messageがキャッシュされていない場合、履歴から取得
-                if not line_user_id:
-                    async for msg in message.channel.history(limit=5, oldest_first=True):
-                        # メッセージ本文から検索
-                        if msg.content:
-                            match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', msg.content)
-                            if match:
-                                line_user_id = match.group(1)
-                                print(f"[DEBUG] Found LINE User ID in content: {line_user_id}")
-                                break
+                for embed in msg.embeds:
+                    embed_text = ""
+                    if embed.description:
+                        embed_text += embed.description
+                    for field in embed.fields:
+                        embed_text += f" {field.name} {field.value}"
 
-                        # Embed（埋め込み）から検索
-                        for embed in msg.embeds:
-                            embed_text = ""
-                            if embed.description:
-                                embed_text += embed.description
-                            for field in embed.fields:
-                                embed_text += f" {field.name} {field.value}"
+                    match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', embed_text)
+                    if match:
+                        line_user_id = match.group(1)
+                        print(f"[DEBUG] Found LINE User ID in embed: {line_user_id}")
+                        break
 
-                            match = re.search(r'LINE User ID:\s*`?([A-Za-z0-9]+)`?', embed_text)
-                            if match:
-                                line_user_id = match.group(1)
-                                print(f"[DEBUG] Found LINE User ID in embed: {line_user_id}")
-                                break
-
-                        if line_user_id:
-                            break
-
-    # 通常チャンネルからの転送（トピックにLINE User IDがあれば転送）
-    if not line_user_id and hasattr(message.channel, 'topic'):
-        line_user_id = get_line_user_id_from_channel(message.channel)
+                if line_user_id:
+                    break
 
     if not line_user_id:
         print(f"[DEBUG] No LINE User ID found for channel: {message.channel.name}")
@@ -637,20 +786,19 @@ async def on_message(message):
     print(f"[DEBUG] LINE User ID found: {line_user_id}")
 
     # 複数LINEユーザー対応（夫婦連携）
-    if isinstance(message.channel, discord.Thread) and str(message.channel.parent_id) == str(get_forum_line()):
-        all_line_users = get_all_line_users_from_thread(message.channel.id)
-        if len(all_line_users) > 1:
-            has_content = message.content and not message.content.startswith("!")
-            attachment_data = [
-                {'url': att.url, 'content_type': att.content_type}
-                for att in message.attachments
-                if att.content_type and att.content_type.startswith("image/")
-            ]
-            if has_content or attachment_data:
-                view = ReplyTargetView(all_line_users, message.content if has_content else "", attachment_data)
-                names = " / ".join(u['display_name'] for u in all_line_users)
-                await message.reply(f"📨 送信先を選択してください（{names}）", view=view, mention_author=False)
-            return
+    all_line_users = get_all_line_users_from_thread(thread_id)
+    if len(all_line_users) > 1:
+        has_content = message.content and not message.content.startswith("!")
+        attachment_data = [
+            {'url': att.url, 'content_type': att.content_type}
+            for att in message.attachments
+            if att.content_type and att.content_type.startswith("image/")
+        ]
+        if has_content or attachment_data:
+            view = ReplyTargetView(all_line_users, message.content if has_content else "", attachment_data)
+            names = " / ".join(u['display_name'] for u in all_line_users)
+            await message.reply(f"📨 送信先を選択してください（{names}）", view=view, mention_author=False)
+        return
 
     # テキストメッセージ送信（単一ユーザー）
     if message.content and not message.content.startswith("!"):
@@ -1069,12 +1217,13 @@ class ReplyTargetSelect(discord.ui.Select):
 
 
 class TemplateEditModal(discord.ui.Modal):
-    """テンプレート編集モーダル（複数ユーザー対応）"""
-    def __init__(self, template, customer_name, order_id, line_user_ids):
+    """テンプレート編集モーダル（複数ユーザー対応 / Instagram対応）"""
+    def __init__(self, template, customer_name, order_id, line_user_ids, platform='line'):
         self.template = template
         self.customer_name = customer_name
         self.order_id = order_id
         self.line_user_ids = line_user_ids  # [{'line_user_id': ..., 'display_name': ...}]
+        self.platform = platform  # 'line', 'instagram', or 'atelier'
 
         title = template["label"]
         if template.get("status_action"):
@@ -1101,26 +1250,58 @@ class TemplateEditModal(discord.ui.Modal):
         message_text = self.message_input.value
         results = []
 
-        # 1. LINE送信（全ユーザーに送信）
+        # 1. メッセージ送信（プラットフォーム別）
         all_success = True
         sent_names = []
-        for user in self.line_user_ids:
-            success = send_line_message(user['line_user_id'], [
-                {"type": "text", "text": message_text}
-            ])
-            if success:
-                sent_names.append(user['display_name'])
+        platform_labels = {'line': 'LINE', 'instagram': 'Instagram', 'atelier': 'アトリエ'}
+        platform_label = platform_labels.get(self.platform, self.platform)
+
+        if self.platform == 'atelier':
+            # アトリエ: WordPress webhook で送信
+            webhook_url = get_atelier_webhook_url()
+            secret = get_atelier_webhook_secret()
+            if webhook_url and secret and self.order_id:
+                try:
+                    resp = requests.post(webhook_url, json={
+                        "order_id": int(self.order_id),
+                        "message": message_text,
+                        "image_url": "",
+                    }, headers={
+                        "X-Atelier-Secret": secret,
+                        "Content-Type": "application/json",
+                    }, timeout=10)
+                    if resp.status_code == 200:
+                        all_success = True
+                        sent_names.append(self.customer_name or "顧客")
+                    else:
+                        all_success = False
+                        print(f"[Atelier Template] Webhook failed: {resp.status_code} {resp.text}")
+                except Exception as e:
+                    all_success = False
+                    print(f"[Atelier Template] Webhook error: {e}")
             else:
                 all_success = False
+        else:
+            for user in self.line_user_ids:
+                if self.platform == 'instagram':
+                    success = send_instagram_message(user['line_user_id'], message_text)
+                else:
+                    success = send_line_message(user['line_user_id'], [
+                        {"type": "text", "text": message_text}
+                    ])
+                if success:
+                    sent_names.append(user['display_name'])
+                else:
+                    all_success = False
 
-        if not sent_names:
-            await interaction.followup.send("❌ LINE送信に失敗しました", ephemeral=True)
+        if not sent_names and not (self.platform == 'atelier' and all_success):
+            await interaction.followup.send(f"❌ {platform_label}送信に失敗しました", ephemeral=True)
             return
 
         if len(self.line_user_ids) > 1:
-            results.append(f"✅ LINE送信完了（{', '.join(sent_names)}）")
+            results.append(f"✅ {platform_label}送信完了（{', '.join(sent_names)}）")
         else:
-            results.append("✅ LINE送信完了")
+            results.append(f"✅ {platform_label}送信完了")
 
         # 2. WooCommerceステータス更新（一度だけ）
         status_action = self.template.get("status_action")
@@ -1195,11 +1376,13 @@ class TemplateEditModal(discord.ui.Modal):
             color=0x06C755
         )
         sent_embed.set_author(name=f"📤 {self.template['label']}")
+        footer_platforms = {'line': 'LINE送信済み', 'instagram': 'Instagram送信済み', 'atelier': 'アトリエ送信済み'}
+        footer_platform = footer_platforms.get(self.platform, f'{self.platform}送信済み')
         if len(self.line_user_ids) > 1:
             names = ", ".join(u['display_name'] for u in self.line_user_ids)
-            sent_embed.set_footer(text=f"LINE送信済み ({names}) • {datetime.now().strftime('%m/%d %H:%M')}")
+            sent_embed.set_footer(text=f"{footer_platform} ({names}) • {datetime.now().strftime('%m/%d %H:%M')}")
         else:
-            sent_embed.set_footer(text=f"LINE送信済み • {datetime.now().strftime('%m/%d %H:%M')}")
+            sent_embed.set_footer(text=f"{footer_platform} • {datetime.now().strftime('%m/%d %H:%M')}")
         await thread.send(embed=sent_embed)
 
         # 7. 顧客一覧を更新
@@ -1218,7 +1401,7 @@ class TemplatePersistentView(discord.ui.View):
         super().__init__(timeout=None)
 
     async def _handle_button(self, interaction: discord.Interaction, template_id: str):
-        """ボタン押下時の共通処理（複数ユーザー対応）"""
+        """ボタン押下時の共通処理（複数ユーザー対応 / Instagram対応）"""
         templates = load_templates()
         template = next((t for t in templates if t["id"] == template_id), None)
         if not template:
@@ -1230,26 +1413,46 @@ class TemplatePersistentView(discord.ui.View):
             await interaction.response.send_message("スレッド内で使用してください", ephemeral=True)
             return
 
-        # 全LINE User ID取得（複数ユーザー対応）
-        all_line_users = get_all_line_users_from_thread(thread.id)
-        if not all_line_users:
-            # フォールバック: 従来の方法で検索
-            line_user_id = await find_line_user_id_in_thread(thread)
-            if not line_user_id:
-                await interaction.response.send_message("❌ LINE User IDが見つかりません", ephemeral=True)
-                return
+        # プラットフォーム判定
+        is_atelier = get_forum_atelier() and str(thread.parent_id) == str(get_forum_atelier())
+
+        if is_atelier:
+            # アトリエスレッド
+            platform = 'atelier'
             customer_name, order_id = get_thread_customer_info(thread)
-            all_line_users = [{'line_user_id': line_user_id, 'display_name': customer_name}]
+            all_users = [{'line_user_id': '', 'display_name': customer_name}]
+        elif get_platform_from_thread(thread.id) == 'instagram':
+            # Instagram スレッド
+            platform = 'instagram'
+            ig_user_id = get_instagram_user_id_from_thread(thread.id)
+            if not ig_user_id:
+                await interaction.response.send_message("❌ Instagram User IDが見つかりません", ephemeral=True)
+                return
+            ig_map = load_instagram_thread_map()
+            ig_data = ig_map.get(ig_user_id, {})
+            customer_name, order_id = get_thread_customer_info(thread)
+            all_users = [{'line_user_id': ig_user_id, 'display_name': ig_data.get('display_name', customer_name)}]
+        else:
+            # LINE スレッド（従来ロジック）
+            platform = 'line'
+            all_users = get_all_line_users_from_thread(thread.id)
+            if not all_users:
+                line_user_id = await find_line_user_id_in_thread(thread)
+                if not line_user_id:
+                    await interaction.response.send_message("❌ LINE User IDが見つかりません", ephemeral=True)
+                    return
+                customer_name, order_id = get_thread_customer_info(thread)
+                all_users = [{'line_user_id': line_user_id, 'display_name': customer_name}]
 
         # 顧客情報取得
         customer_name, order_id = get_thread_customer_info(thread)
-        if not order_id:
-            customer = get_customer(all_line_users[0]['line_user_id'])
+        if not order_id and platform == 'line':
+            customer = get_customer(all_users[0]['line_user_id'])
             if customer and customer.get("orders"):
                 order_id = str(customer["orders"][-1].get("order_id", ""))
 
-        # モーダル表示（全ユーザーに送信）
-        modal = TemplateEditModal(template, customer_name, order_id, all_line_users)
+        # モーダル表示（プラットフォーム情報付き）
+        modal = TemplateEditModal(template, customer_name, order_id, all_users, platform=platform)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="① あいさつ", style=discord.ButtonStyle.secondary, custom_id="tpl_greeting", emoji="👋", row=0)
