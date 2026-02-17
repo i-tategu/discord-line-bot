@@ -651,11 +651,11 @@ def parse_order_data(order):
     sim_image_url = meta.get('_simulation_image_url', '')
     sim_image = sim_image_url if sim_image_url else meta.get('_simulation_image', '')
 
-    # 刻印情報（フォールバック）
-    if not sim_data.get('groomName'):
-        sim_data['groomName'] = meta.get('_engraving_name1', '')
-    if not sim_data.get('brideName'):
-        sim_data['brideName'] = meta.get('_engraving_name2', '')
+    # 刻印情報（engraving fieldsを優先 - シミュレーターのデフォルト名が残っている場合があるため）
+    if meta.get('_engraving_name1'):
+        sim_data['groomName'] = meta['_engraving_name1']
+    if meta.get('_engraving_name2'):
+        sim_data['brideName'] = meta['_engraving_name2']
 
     # フォント情報（フォールバック）
     if not sim_data.get('baseFont'):
@@ -689,11 +689,9 @@ def parse_order_data(order):
         back_sim_image_url = meta.get('_back_simulation_image_url', '')
         back_sim_image = back_sim_image_url if back_sim_image_url else meta.get('_back_simulation_image', '')
 
-        # 裏面もフォールバック（表面のデータを引き継ぐ）
-        if not back_sim_data.get('groomName'):
-            back_sim_data['groomName'] = sim_data.get('groomName', '')
-        if not back_sim_data.get('brideName'):
-            back_sim_data['brideName'] = sim_data.get('brideName', '')
+        # 裏面の名前（engraving優先済みの表面データを引き継ぐ）
+        back_sim_data['groomName'] = sim_data.get('groomName', '')
+        back_sim_data['brideName'] = sim_data.get('brideName', '')
         if not back_sim_data.get('baseFont'):
             back_sim_data['baseFont'] = sim_data.get('baseFont', '')
         if not back_sim_data.get('weddingDate'):
