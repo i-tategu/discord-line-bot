@@ -440,6 +440,71 @@ async def update_overview_channel():
         print(f"[ERROR] Failed to update overview: {e}")
 
 
+async def update_atelier_thread_status(order_id, new_status: CustomerStatus):
+    """アトリエフォーラムスレッドのステータス絵文字・タグを更新"""
+    if not get_forum_atelier():
+        return
+
+    guild = bot.get_guild(int(get_guild_id()))
+    if not guild:
+        return
+
+    forum = guild.get_channel(int(get_forum_atelier()))
+    if not forum or not isinstance(forum, discord.ForumChannel):
+        return
+
+    config = STATUS_CONFIG[new_status]
+    target_prefix = f"#{order_id} "
+
+    # アクティブスレッドから該当注文を検索
+    for thread in forum.threads:
+        if target_prefix in thread.name:
+            try:
+                # スレッド名の絵文字更新
+                new_name = re.sub(
+                    r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*',
+                    '',
+                    thread.name
+                )
+                new_name = f"{config['emoji']} {new_name}"
+                kwargs = {'name': new_name}
+
+                # フォーラムタグ更新
+                target_tag = None
+                for tag in forum.available_tags:
+                    if config['label'] in tag.name or config['emoji'] in (getattr(tag, 'emoji', None) or ''):
+                        target_tag = tag
+                        break
+                if target_tag:
+                    kwargs['applied_tags'] = [target_tag]
+
+                await thread.edit(**kwargs)
+                print(f"[Atelier] Updated thread: {new_name}")
+            except Exception as e:
+                print(f"[Atelier] Thread update failed: {e}")
+            return
+
+    # アーカイブスレッドも検索
+    try:
+        async for thread in forum.archived_threads(limit=50):
+            if target_prefix in thread.name:
+                try:
+                    await thread.edit(archived=False)
+                    new_name = re.sub(
+                        r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*',
+                        '',
+                        thread.name
+                    )
+                    new_name = f"{config['emoji']} {new_name}"
+                    await thread.edit(name=new_name)
+                    print(f"[Atelier] Updated archived thread: {new_name}")
+                except Exception as e:
+                    print(f"[Atelier] Archived thread update failed: {e}")
+                return
+    except Exception as e:
+        print(f"[Atelier] Archived thread search failed: {e}")
+
+
 async def move_channel_to_category(channel, category_id):
     """チャンネルを別カテゴリに移動"""
     if not category_id:
@@ -1063,6 +1128,12 @@ async def change_status(interaction: discord.Interaction, new_status: str):
     elif status != CustomerStatus.SHIPPED and get_category_active():
         await move_channel_to_category(channel, get_category_active())
 
+    # アトリエフォーラムスレッドも連動更新
+    customer = get_customer(line_user_id)
+    if customer and customer.get('orders'):
+        for order in customer['orders']:
+            await update_atelier_thread_status(order['order_id'], status)
+
     await update_overview_channel()
 
 
@@ -1368,7 +1439,16 @@ class TemplateEditModal(discord.ui.Modal):
             except Exception as e:
                 print(f"[WARN] Tag update failed: {e}")
 
-        # 6. スレッドに送信記録を投稿
+        # 6. アトリエフォーラムスレッド連動更新
+        if status_action and self.order_id:
+            try:
+                new_status = CustomerStatus(status_action)
+                await update_atelier_thread_status(self.order_id, new_status)
+                results.append("✅ アトリエスレッド更新")
+            except Exception as e:
+                print(f"[WARN] Atelier thread update failed: {e}")
+
+        # 7. スレッドに送信記録を投稿
         from datetime import datetime
         thread = interaction.channel
         sent_embed = discord.Embed(
@@ -1385,10 +1465,10 @@ class TemplateEditModal(discord.ui.Modal):
             sent_embed.set_footer(text=f"{footer_platform} • {datetime.now().strftime('%m/%d %H:%M')}")
         await thread.send(embed=sent_embed)
 
-        # 7. 顧客一覧を更新
+        # 8. 顧客一覧を更新
         await update_overview_channel()
 
-        # 8. テンプレートボタンを再投稿（常に下部に表示）
+        # 9. テンプレートボタンを再投稿（常に下部に表示）
         await post_template_buttons(thread)
 
         # 結果報告
