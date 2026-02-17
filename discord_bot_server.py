@@ -1622,14 +1622,18 @@ async def send_template(interaction: discord.Interaction):
 
     if not isinstance(channel, discord.Thread):
         await interaction.response.send_message(
-            "このコマンドは #LINE対応 フォーラムのスレッド内で使用してください",
+            "このコマンドは #LINE対応 または #atelier フォーラムのスレッド内で使用してください",
             ephemeral=True
         )
         return
 
-    if str(channel.parent_id) != str(get_forum_line()):
+    parent_id = str(channel.parent_id)
+    allowed_forums = [str(get_forum_line())]
+    if get_forum_atelier():
+        allowed_forums.append(str(get_forum_atelier()))
+    if parent_id not in allowed_forums:
         await interaction.response.send_message(
-            "このコマンドは #LINE対応 フォーラムのスレッド内で使用してください",
+            "このコマンドは #LINE対応 または #atelier フォーラムのスレッド内で使用してください",
             ephemeral=True
         )
         return
