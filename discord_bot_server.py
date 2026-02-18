@@ -2086,6 +2086,13 @@ def api_get_overview():
     return jsonify(get_status_summary())
 
 
+@api.route("/api/notify-changed", methods=["POST"])
+def api_notify_changed():
+    """プッシュ通知登録変更 → 顧客一覧を更新"""
+    asyncio.run_coroutine_threadsafe(update_overview_channel(), bot.loop)
+    return jsonify({"success": True})
+
+
 @api.route("/health", methods=["GET"])
 def health_check():
     """ヘルスチェック（Railway用）"""
