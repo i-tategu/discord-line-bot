@@ -357,11 +357,39 @@ async def create_status_embed():
     """ステータス一覧のEmbed作成"""
     summary = get_status_summary()
 
+    # Push通知ステータスを一括取得
+    notify_data = {'orders': {}, 'inquiries': {}}
+    # メール開封ステータスを一括取得
+    email_track_data = {'orders': {}, 'inquiries': {}}
+    try:
+        wc_url = get_wc_url()
+        secret = get_atelier_webhook_secret()
+        if wc_url and secret:
+            resp = requests.get(
+                f"{wc_url}/wp-json/i-tategu/v1/atelier/notify-status",
+                headers={"X-Atelier-Secret": secret},
+                timeout=5
+            )
+            if resp.status_code == 200:
+                notify_data = resp.json()
+            resp2 = requests.get(
+                f"{wc_url}/wp-json/i-tategu/v1/atelier/email-track-status",
+                headers={"X-Atelier-Secret": secret},
+                timeout=5
+            )
+            if resp2.status_code == 200:
+                email_track_data = resp2.json()
+    except Exception as e:
+        print(f"[Overview] Notify/email status fetch failed: {e}")
+
+    notify_orders = {str(k): v for k, v in notify_data.get('orders', {}).items()}
+    email_track_orders = {str(k): v for k, v in email_track_data.get('orders', {}).items()}
+
     embeds = []
 
     header = discord.Embed(
         title="📊 顧客ステータス一覧",
-        description="各ステータスの顧客数と詳細",
+        description="各ステータスの顧客数と詳細\n🔔通知ON 📬メール開封 📩メール未開封 🔕未送信",
         color=0x5865F2
     )
     header.set_footer(text="名前をクリックでチャンネルへジャンプ")
@@ -383,13 +411,24 @@ async def create_status_embed():
                 name = c.get('display_name', '不明')
                 # 注文番号を取得
                 order_num = ""
+                order_id_str = ""
                 if c.get('orders'):
                     latest_order = c['orders'][-1]
-                    order_num = f"#{latest_order.get('order_id', '')} "
-                if channel_id:
-                    customer_links.append(f"• {order_num}<#{channel_id}> {name}様")
+                    order_id_str = str(latest_order.get('order_id', ''))
+                    order_num = f"#{order_id_str} "
+                # 通知・メール開封ステータス
+                if order_id_str in notify_orders:
+                    indicator = "🔔"
+                elif order_id_str in email_track_orders and email_track_orders[order_id_str].get('opened'):
+                    indicator = "📬"  # メール開封済み
+                elif order_id_str in email_track_orders:
+                    indicator = "📩"  # メール送信済み・未開封
                 else:
-                    customer_links.append(f"• {order_num}{name}様")
+                    indicator = "🔕"
+                if channel_id:
+                    customer_links.append(f"• {indicator} {order_num}<#{channel_id}> {name}様")
+                else:
+                    customer_links.append(f"• {indicator} {order_num}{name}様")
 
             # Embed文字数制限(4096)対策: 超える場合は複数Embedに分割
             chunk = []
@@ -1260,6 +1299,61 @@ async def atelier_url(interaction: discord.Interaction, order_id: int):
         await interaction.followup.send(f"エラー: {e}", ephemeral=True)
 
 
+@bot.tree.command(name="notify", description="通知ONかチェック（アトリエスレッド内で使用）")
+async def notify_check(interaction: discord.Interaction):
+    """スレッドの顧客がPush通知をONにしているか確認"""
+    await interaction.response.defer(ephemeral=True)
+
+    thread = interaction.channel
+    if not isinstance(thread, discord.Thread):
+        await interaction.followup.send("スレッド内で使用してください", ephemeral=True)
+        return
+
+    forum_id = get_forum_atelier()
+    if not forum_id or str(thread.parent_id) != str(forum_id):
+        await interaction.followup.send("アトリエフォーラムのスレッドで使用してください", ephemeral=True)
+        return
+
+    thread_name = thread.name
+    is_inquiry = thread_name.startswith('💬')
+    id_match = re.search(r'#(\d+)', thread_name)
+    if not id_match:
+        await interaction.followup.send("スレッド名からIDを取得できません", ephemeral=True)
+        return
+
+    target_id = id_match.group(1)
+
+    # WordPress APIで通知登録状況を確認
+    wc_url = get_wc_url()
+    if is_inquiry:
+        api_url = f"{wc_url}/wp-json/i-tategu/v1/atelier/notify-status?type=inquiry&id={target_id}"
+    else:
+        api_url = f"{wc_url}/wp-json/i-tategu/v1/atelier/notify-status?type=order&id={target_id}"
+
+    secret = get_atelier_webhook_secret()
+    try:
+        resp = requests.get(api_url, headers={"X-Atelier-Secret": secret}, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            count = data.get('count', 0)
+            if count > 0:
+                emoji = "🔔"
+                label = f"通知ON（{count}台登録）"
+            else:
+                emoji = "🔕"
+                label = "通知OFF（未登録）"
+
+            type_label = "問い合わせ" if is_inquiry else "注文"
+            await interaction.followup.send(
+                f"{emoji} **{type_label} #{target_id}**: {label}",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(f"確認失敗: HTTP {resp.status_code}", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"エラー: {e}", ephemeral=True)
+
+
 @bot.tree.command(name="overview", description="顧客一覧を更新")
 async def refresh_overview(interaction: discord.Interaction):
     """一覧更新コマンド"""
@@ -1832,6 +1926,13 @@ def api_mark_read():
 
     asyncio.run_coroutine_threadsafe(add_reactions(), bot.loop)
     return jsonify({"status": "ok"})
+
+
+@api.route("/api/notify-changed", methods=["POST"])
+def api_notify_changed():
+    """プッシュ通知登録変更 → 顧客一覧を更新"""
+    asyncio.run_coroutine_threadsafe(update_overview_channel(), bot.loop)
+    return jsonify({"success": True})
 
 
 @api.route("/health", methods=["GET"])
