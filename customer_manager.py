@@ -35,13 +35,13 @@ STATUS_CONFIG = {
     },
     CustomerStatus.PRODUCED: {
         "label": "制作完了",
-        "emoji": "🟢",
-        "color": 0x2ECC71,
+        "emoji": "🟠",
+        "color": 0xE67E22,
     },
     CustomerStatus.SHIPPED: {
         "label": "発送済み",
-        "emoji": "📦",
-        "color": 0x9B59B6,
+        "emoji": "🟢",
+        "color": 0x2ECC71,
     },
 }
 
