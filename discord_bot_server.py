@@ -525,7 +525,7 @@ async def update_atelier_thread_status(order_id, new_status: CustomerStatus):
             try:
                 # スレッド名の絵文字更新
                 new_name = re.sub(
-                    r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*',
+                    r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F\U0001F4AC\U0001F3A8]\s*',
                     '',
                     thread.name
                 )
@@ -554,7 +554,7 @@ async def update_atelier_thread_status(order_id, new_status: CustomerStatus):
                 try:
                     await thread.edit(archived=False)
                     new_name = re.sub(
-                        r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*',
+                        r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F\U0001F4AC\U0001F3A8]\s*',
                         '',
                         thread.name
                     )
@@ -1568,11 +1568,13 @@ class TemplateEditModal(discord.ui.Modal):
                 new_status = CustomerStatus(status_action)
                 config = STATUS_CONFIG[new_status]
                 thread = interaction.channel
-                new_name = re.sub(
-                    r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*',
-                    f"{config['emoji']} ",
+                # 既存絵文字を除去（なければそのまま）
+                stripped = re.sub(
+                    r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F\U0001F4AC\U0001F3A8]\s*',
+                    '',
                     thread.name
                 )
+                new_name = f"{config['emoji']} {stripped}"
                 if new_name != thread.name:
                     await thread.edit(name=new_name)
                     results.append("✅ スレッド名更新")
