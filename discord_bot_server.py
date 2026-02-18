@@ -804,12 +804,14 @@ async def handle_atelier_message(message):
             "inquiry_id": int(inquiry_id),
             "message": text,
             "image_url": image_url,
+            "discord_message_id": str(message.id),
         }
     else:
         payload = {
             "order_id": int(order_id),
             "message": text,
             "image_url": image_url,
+            "discord_message_id": str(message.id),
         }
 
     try:
@@ -2101,6 +2103,38 @@ def api_delete_customer():
 def api_get_overview():
     """一覧取得API"""
     return jsonify(get_status_summary())
+
+
+@api.route("/api/mark-read", methods=["POST"])
+def api_mark_read():
+    """お客様がメッセージを既読 → Discordに👀リアクション追加"""
+    data = request.json or {}
+    discord_message_ids = data.get("discord_message_ids", [])
+    thread_id = data.get("discord_thread_id")
+
+    if not discord_message_ids or not thread_id:
+        return jsonify({"error": "Missing params"}), 400
+
+    async def add_read_reactions():
+        try:
+            channel = bot.get_channel(int(thread_id))
+            if not channel:
+                channel = await bot.fetch_channel(int(thread_id))
+            if channel:
+                for msg_id in discord_message_ids:
+                    try:
+                        msg = await channel.fetch_message(int(msg_id))
+                        # 既に👀が付いていなければ追加
+                        has_eyes = any(str(r.emoji) == '👀' and r.me for r in msg.reactions)
+                        if not has_eyes:
+                            await msg.add_reaction("👀")
+                    except Exception as e:
+                        print(f"[MarkRead] Failed for msg {msg_id}: {e}")
+        except Exception as e:
+            print(f"[MarkRead] Error: {e}")
+
+    asyncio.run_coroutine_threadsafe(add_read_reactions(), bot.loop)
+    return jsonify({"success": True, "count": len(discord_message_ids)})
 
 
 @api.route("/api/notify-changed", methods=["POST"])
