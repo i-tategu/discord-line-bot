@@ -164,7 +164,7 @@ and to create a peaceful happy family."""
 }
 
 TITLES = {
-    'wedding': 'Wedding Certificate',
+    'wedding': 'Marriage Certificate',
     'marriage': 'Certificate of Marriage'
 }
 
@@ -1011,7 +1011,7 @@ def create_pptx(order_data, temp_dir):
     # タイトル
     title_font = get_element_font('title')
     title_key = sim_data.get('title', 'wedding')
-    title_text = sim_data.get('customTitle', '') if title_key == 'custom' else TITLES.get(title_key, 'Wedding Certificate')
+    title_text = sim_data.get('customTitle', '') if title_key == 'custom' else TITLES.get(title_key, 'Marriage Certificate')
     title_x = actual_board_left + actual_board_width * (sim_data.get('titleX', 50) / 100)
     title_y_pct = get_adjusted_value('titleY', 22)
     title_y = actual_board_top + actual_board_height * (title_y_pct / 100)
@@ -1231,7 +1231,7 @@ def create_pptx(order_data, temp_dir):
         # タイトル
         back_title_font = get_back_element_font('title')
         back_title_key = back_val('title', 'wedding')
-        back_title_text = back_sim_data.get('customTitle', '') if back_title_key == 'custom' else TITLES.get(back_title_key, 'Wedding Certificate')
+        back_title_text = back_sim_data.get('customTitle', '') if back_title_key == 'custom' else TITLES.get(back_title_key, 'Marriage Certificate')
         back_title_x = back_actual_board_left + back_actual_board_width * (back_val('titleX', 50) / 100)
         back_title_y = back_actual_board_top + back_actual_board_height * (back_val('titleY', 22) / 100)
         back_title_size = 24 * (back_val('titleSize', 100) / 100) * BACK_FONT_SCALE
@@ -1557,7 +1557,7 @@ def create_pdf(order_data, temp_dir):
 
     # タイトル - 板の境界を基準に配置
     title_key = sim_data.get('title', 'wedding')
-    title_text = sim_data.get('customTitle', '') if title_key == 'custom' else TITLES.get(title_key, 'Wedding Certificate')
+    title_text = sim_data.get('customTitle', '') if title_key == 'custom' else TITLES.get(title_key, 'Marriage Certificate')
     # titleY=22 は板の上から22%の位置
     title_x = board_center_x + actual_board_w * ((sim_data.get('titleX', 50) - 50) / 100)
     title_y_pct = sim_data.get('titleY', 22) / 100
@@ -1735,6 +1735,12 @@ def send_discord_notification(order_data, design, bot_token, order=None):
     customer_phone = ""
     customer_email = ""
 
+    # 注文メタデータから刻印情報を取得
+    engraving_title = ""
+    ceremony_type = ""
+    date_format = ""
+    special_notes = ""
+
     if order:
         billing = order.get('billing', {})
         customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
@@ -1742,6 +1748,23 @@ def send_discord_notification(order_data, design, bot_token, order=None):
         payment_method = order.get('payment_method_title', '')
         customer_phone = billing.get('phone', '')
         customer_email = billing.get('email', '')
+
+        # メタデータから刻印情報を取得
+        meta = {m['key']: m['value'] for m in order.get('meta_data', [])}
+        engraving_title = meta.get('_engraving_title', '')
+        ceremony_type = meta.get('_engraving_ceremony_type', '')
+        date_format = meta.get('_date_format', '')
+        special_notes = meta.get('_special_notes', '')
+
+        # 日付表記形式の表示名変換
+        date_format_labels = {
+            'western_dot': '西暦.月.日',
+            'us_full': 'アメリカ式',
+            'japanese': '和暦',
+            'uk_full': 'イギリス式',
+            'uk_ordinal': 'イギリス式・序数',
+        }
+        date_format = date_format_labels.get(date_format, date_format)
 
     embed = {
         "title": f"🛒 新規注文 #{order_data['order_id']}",
@@ -1751,12 +1774,29 @@ def send_discord_notification(order_data, design, bot_token, order=None):
             {"name": "💰 金額", "value": f"¥{int(float(order_total)):,}" if order_total else "N/A", "inline": True},
             {"name": "💳 支払方法", "value": payment_method or "N/A", "inline": True},
             {"name": "📦 商品", "value": f"{order_data['board_name']} No.{order_data['board_number']}", "inline": False},
-            {"name": "📅 挙式日", "value": order_data['wedding_date'], "inline": False},
+            {"name": "📅 挙式日", "value": f"{order_data['wedding_date']}（{date_format}）" if date_format else order_data['wedding_date'], "inline": False},
             {"name": "📞 連絡先", "value": f"TEL: {customer_phone}\nEmail: {customer_email}" if customer_phone else "N/A", "inline": False},
-            {"name": "🎨 Canva", "value": f"[デザインを編集する]({edit_url})", "inline": False},
         ],
         "footer": {"text": "i.tategu 自動化システム（Railway）"},
     }
+
+    # 刻印情報セクション
+    engraving_lines = []
+    if engraving_title:
+        engraving_lines.append(f"タイトル: {engraving_title}")
+    if ceremony_type:
+        engraving_lines.append(f"挙式タイプ: {ceremony_type}")
+    if groom or bride:
+        engraving_lines.append(f"名前: {groom} & {bride}")
+    if engraving_lines:
+        embed["fields"].append({"name": "🌿 刻印情報", "value": "\n".join(engraving_lines), "inline": False})
+
+    # 備考
+    if special_notes:
+        embed["fields"].append({"name": "📝 備考", "value": special_notes, "inline": False})
+
+    # Canvaリンク
+    embed["fields"].append({"name": "🎨 Canva", "value": f"[デザインを編集する]({edit_url})", "inline": False})
 
     if order:
         for item in order.get('line_items', []):
@@ -1972,57 +2012,6 @@ def add_cross_links_to_message(bot_token, channel_id, message_id, links_field):
             return False
     except Exception as e:
         print(f"[CrossLink] Error: {e}")
-        return False
-
-
-def add_cross_links_to_atelier_thread(bot_token, thread_id, links_field):
-    """アトリエスレッドの最初のメッセージに関連リンクフィールドを追加"""
-    url = f"https://discord.com/api/v10/channels/{thread_id}/messages"
-    headers = {
-        "Authorization": f"Bot {bot_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        # スレッドの最初のメッセージを取得（after=0, limit=1 で最古のメッセージ）
-        response = requests.get(url, params={"limit": 5}, headers=headers)
-        if response.status_code != 200:
-            print(f"[CrossLink] Failed to get atelier messages: {response.status_code}")
-            return False
-
-        messages = response.json()
-        if not messages:
-            print(f"[CrossLink] No messages in atelier thread {thread_id}")
-            return False
-
-        # 最初のメッセージ（embedを持つBot投稿）を探す
-        target_msg = None
-        for msg in reversed(messages):
-            if msg.get("embeds"):
-                target_msg = msg
-                break
-
-        if not target_msg:
-            print(f"[CrossLink] No embed message found in atelier thread {thread_id}")
-            return False
-
-        msg_id = target_msg["id"]
-        embeds = target_msg.get("embeds", [])
-        if embeds:
-            embeds[-1]["fields"] = embeds[-1].get("fields", []) + [
-                {"name": "📎 関連リンク", "value": links_field, "inline": False}
-            ]
-
-        edit_url = f"https://discord.com/api/v10/channels/{thread_id}/messages/{msg_id}"
-        response = requests.patch(edit_url, json={"embeds": embeds}, headers=headers)
-        if response.status_code == 200:
-            print(f"[CrossLink] Updated atelier thread {thread_id}")
-            return True
-        else:
-            print(f"[CrossLink] Failed to update atelier: {response.status_code}")
-            return False
-    except Exception as e:
-        print(f"[CrossLink] Atelier error: {e}")
         return False
 
 
@@ -2318,13 +2307,6 @@ def process_order(order_id, config):
                 if atelier_thread_id:
                     shipping_links += f"\n[🎨 アトリエ](https://discord.com/channels/{guild_id}/{atelier_thread_id})"
                 add_cross_links_to_message(bot_token, shipping_ch, shipping_msg_id, shipping_links)
-
-                # ⑤ → ① + ③ へのリンク（アトリエスレッド → 注文通知・発送管理）
-                if atelier_thread_id:
-                    atelier_links = f"[🛒 注文通知](https://discord.com/channels/{guild_id}/{notify_ch}/{notify_msg_id})"
-                    atelier_links += f"\n[📦 発送管理](https://discord.com/channels/{guild_id}/{shipping_ch}/{shipping_msg_id})"
-                    # アトリエスレッドの最初のメッセージに関連リンクを追加
-                    add_cross_links_to_atelier_thread(bot_token, atelier_thread_id, atelier_links)
 
                 print(f"[Canva] Cross-links established between notifications")
 
