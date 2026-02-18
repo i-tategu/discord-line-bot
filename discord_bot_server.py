@@ -91,9 +91,6 @@ def get_atelier_webhook_url():
 def get_atelier_webhook_secret():
     return os.environ.get("ATELIER_WEBHOOK_SECRET", "")
 
-def get_atelier_inquiry_webhook_url():
-    return os.environ.get("ATELIER_INQUIRY_WEBHOOK_URL", "https://i-tategu-shop.com/wp-json/i-tategu/v1/atelier/inquiry/webhook")
-
 def get_canva_access_token():
     access, _ = get_current_tokens()
     return access or os.environ.get("CANVA_ACCESS_TOKEN")
@@ -308,61 +305,13 @@ _posting_buttons_lock = set()  # 再投稿ループ防止
 
 
 def load_templates():
-    """LINEテンプレートを読み込み（DATA_DIR優先、バンドル版の新規テンプレートを自動マージ）"""
-    saved_templates = []
-    bundled_templates = []
-
-    if os.path.exists(_TEMPLATES_SAVED):
-        with open(_TEMPLATES_SAVED, 'r', encoding='utf-8') as f:
-            saved_templates = json.load(f).get("templates", [])
-
-    if os.path.exists(_TEMPLATES_BUNDLED) and _TEMPLATES_BUNDLED != _TEMPLATES_SAVED:
-        with open(_TEMPLATES_BUNDLED, 'r', encoding='utf-8') as f:
-            bundled_templates = json.load(f).get("templates", [])
-
-    if not saved_templates:
-        return bundled_templates
-
-    # バンドル版との差分を同期
-    bundled_map = {t["id"]: t for t in bundled_templates}
-    saved_ids = {t["id"] for t in saved_templates}
-    new_templates = [t for t in bundled_templates if t["id"] not in saved_ids]
-
-    changed = False
-
-    # 既存テンプレートのテキスト・ラベル・絵文字をバンドル版で同期
-    for st in saved_templates:
-        bt = bundled_map.get(st["id"])
-        if bt and st["text"] != bt["text"]:
-            st["text"] = bt["text"]
-            changed = True
-        if bt and st.get("emoji") != bt.get("emoji"):
-            st["emoji"] = bt.get("emoji")
-            changed = True
-
-    # 新規テンプレートを追加
-    if new_templates:
-        bundled_order = {t["id"]: i for i, t in enumerate(bundled_templates)}
-        merged = list(saved_templates)
-        for nt in new_templates:
-            target_pos = bundled_order.get(nt["id"], len(merged))
-            insert_at = 0
-            for i, t in enumerate(merged):
-                if bundled_order.get(t["id"], 0) < target_pos:
-                    insert_at = i + 1
-            merged.insert(insert_at, nt)
-        saved_templates = merged
-        changed = True
-
-    if changed:
-        # ラベル番号を振り直し
-        nums = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
-        for i, t in enumerate(saved_templates):
-            num = nums[i] if i < len(nums) else f"({i+1})"
-            t["label"] = re.sub(r'^[①-⑳(]\S*\s*', f'{num} ', t["label"])
-        save_templates(saved_templates)
-
-    return saved_templates
+    """LINEテンプレートを読み込み（DATA_DIR優先）"""
+    path = _TEMPLATES_SAVED if os.path.exists(_TEMPLATES_SAVED) else _TEMPLATES_BUNDLED
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data.get("templates", [])
+    return []
 
 
 def save_templates(templates):
@@ -373,12 +322,8 @@ def save_templates(templates):
 
 def get_thread_customer_info(thread):
     """フォーラムスレッドから顧客情報を取得"""
-    # 絵文字付きパターン: 🟡 #1874 金澤 あかね 様
-    name_match = re.search(r'[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F\U0001F4AC\U0001F3A8]\s*(?:#\d+\s+)?(.+?)\s*様', thread.name)
-    if not name_match:
-        # 絵文字なしパターン: #1860 中里 文音 様 / 中里 文音 様
-        name_match = re.search(r'(?:#\d+\s+)?([^\d#].+?)\s*様', thread.name)
-    customer_name = name_match.group(1).strip() if name_match else "お客様"
+    name_match = re.search(r'[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*(?:#\d+\s+)?(.+?)\s*様', thread.name)
+    customer_name = name_match.group(1) if name_match else "お客様"
 
     order_match = re.search(r'#(\d+)', thread.name)
     order_id = order_match.group(1) if order_match else None
@@ -412,39 +357,11 @@ async def create_status_embed():
     """ステータス一覧のEmbed作成"""
     summary = get_status_summary()
 
-    # Push通知ステータスを一括取得
-    notify_data = {'orders': {}, 'inquiries': {}}
-    # メール開封ステータスを一括取得
-    email_track_data = {'orders': {}, 'inquiries': {}}
-    try:
-        wc_url = get_wc_url()
-        secret = get_atelier_webhook_secret()
-        if wc_url and secret:
-            resp = requests.get(
-                f"{wc_url}/wp-json/i-tategu/v1/atelier/notify-status",
-                headers={"X-Atelier-Secret": secret},
-                timeout=5
-            )
-            if resp.status_code == 200:
-                notify_data = resp.json()
-            resp2 = requests.get(
-                f"{wc_url}/wp-json/i-tategu/v1/atelier/email-track-status",
-                headers={"X-Atelier-Secret": secret},
-                timeout=5
-            )
-            if resp2.status_code == 200:
-                email_track_data = resp2.json()
-    except Exception as e:
-        print(f"[Overview] Notify/email status fetch failed: {e}")
-
-    notify_orders = {str(k): v for k, v in notify_data.get('orders', {}).items()}
-    email_track_orders = {str(k): v for k, v in email_track_data.get('orders', {}).items()}
-
     embeds = []
 
     header = discord.Embed(
         title="📊 顧客ステータス一覧",
-        description="各ステータスの顧客数と詳細\n🔔通知ON 📬メール開封 📩メール未開封 🔕未送信",
+        description="各ステータスの顧客数と詳細",
         color=0x5865F2
     )
     header.set_footer(text="名前をクリックでチャンネルへジャンプ")
@@ -466,24 +383,13 @@ async def create_status_embed():
                 name = c.get('display_name', '不明')
                 # 注文番号を取得
                 order_num = ""
-                order_id_str = ""
                 if c.get('orders'):
                     latest_order = c['orders'][-1]
-                    order_id_str = str(latest_order.get('order_id', ''))
-                    order_num = f"#{order_id_str} "
-                # 通知・メール開封ステータス
-                if order_id_str in notify_orders:
-                    indicator = "🔔"
-                elif order_id_str in email_track_orders and email_track_orders[order_id_str].get('opened'):
-                    indicator = "📬"  # メール開封済み
-                elif order_id_str in email_track_orders:
-                    indicator = "📩"  # メール送信済み・未開封
-                else:
-                    indicator = "🔕"
+                    order_num = f"#{latest_order.get('order_id', '')} "
                 if channel_id:
-                    customer_links.append(f"• {indicator} {order_num}<#{channel_id}> {name}様")
+                    customer_links.append(f"• {order_num}<#{channel_id}> {name}様")
                 else:
-                    customer_links.append(f"• {indicator} {order_num}{name}様")
+                    customer_links.append(f"• {order_num}{name}様")
 
             # Embed文字数制限(4096)対策: 超える場合は複数Embedに分割
             chunk = []
@@ -568,7 +474,7 @@ async def update_atelier_thread_status(order_id, new_status: CustomerStatus):
             try:
                 # スレッド名の絵文字更新
                 new_name = re.sub(
-                    r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F\U0001F4AC\U0001F3A8]\s*',
+                    r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*',
                     '',
                     thread.name
                 )
@@ -597,7 +503,7 @@ async def update_atelier_thread_status(order_id, new_status: CustomerStatus):
                 try:
                     await thread.edit(archived=False)
                     new_name = re.sub(
-                        r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F\U0001F4AC\U0001F3A8]\s*',
+                        r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*',
                         '',
                         thread.name
                     )
@@ -758,29 +664,17 @@ async def on_ready():
 
 
 async def handle_atelier_message(message):
-    """#atelier フォーラムのメッセージをWordPress webhook に転送（注文 & 問い合わせ対応）"""
+    """#atelier フォーラムのメッセージをWordPress webhook に転送"""
+    # スレッド名から注文番号を取得（例: "🎨 #1865 はるか 様"）
     thread_name = message.channel.name
+    order_match = re.search(r'#(\d+)', thread_name)
+    if not order_match:
+        print(f"[Atelier] Could not extract order ID from thread: {thread_name}")
+        return
+
+    order_id = order_match.group(1)
+    webhook_url = get_atelier_webhook_url()
     secret = get_atelier_webhook_secret()
-
-    # 💬 プレフィックス → 問い合わせスレッド
-    is_inquiry = thread_name.startswith('💬')
-
-    if is_inquiry:
-        # 問い合わせ: スレッド名から inquiry_id を取得（例: "💬 #1 石橋伯昂 様"）
-        id_match = re.search(r'#(\d+)', thread_name)
-        if not id_match:
-            print(f"[Atelier Inquiry] Could not extract inquiry ID from thread: {thread_name}")
-            return
-        inquiry_id = id_match.group(1)
-        webhook_url = get_atelier_inquiry_webhook_url()
-    else:
-        # 注文: スレッド名から order_id を取得（例: "🎨 #1865 はるか 様"）
-        order_match = re.search(r'#(\d+)', thread_name)
-        if not order_match:
-            print(f"[Atelier] Could not extract order ID from thread: {thread_name}")
-            return
-        order_id = order_match.group(1)
-        webhook_url = get_atelier_webhook_url()
 
     if not webhook_url or not secret:
         print("[Atelier] Webhook URL or secret not configured")
@@ -799,20 +693,12 @@ async def handle_atelier_message(message):
     if not text and not image_url:
         return
 
-    if is_inquiry:
-        payload = {
-            "inquiry_id": int(inquiry_id),
-            "message": text,
-            "image_url": image_url,
-            "discord_message_id": str(message.id),
-        }
-    else:
-        payload = {
-            "order_id": int(order_id),
-            "message": text,
-            "image_url": image_url,
-            "discord_message_id": str(message.id),
-        }
+    payload = {
+        "order_id": int(order_id),
+        "message": text,
+        "image_url": image_url,
+        "discord_message_id": str(message.id),
+    }
 
     try:
         resp = requests.post(webhook_url, json=payload, headers={
@@ -822,65 +708,13 @@ async def handle_atelier_message(message):
 
         if resp.status_code == 200:
             await message.add_reaction("✅")
-            label = f"inquiry={inquiry_id}" if is_inquiry else f"order={order_id}"
-            print(f"[Atelier] Forwarded to WP: {label}")
+            print(f"[Atelier] Forwarded to WP: order={order_id}")
         else:
             await message.add_reaction("❌")
             print(f"[Atelier] WP webhook failed: {resp.status_code} {resp.text}")
     except Exception as e:
         await message.add_reaction("❌")
         print(f"[Atelier] Webhook error: {e}")
-
-
-@bot.event
-async def on_raw_reaction_add(payload):
-    """👀リアクションで既読マーク（#atelierフォーラムのみ）"""
-    if str(payload.emoji) != '👀':
-        return
-    if payload.user_id == bot.user.id:
-        return
-
-    # アトリエフォーラムのスレッドか確認
-    forum_id = get_forum_atelier()
-    if not forum_id:
-        return
-
-    channel = bot.get_channel(payload.channel_id)
-    if not isinstance(channel, discord.Thread):
-        return
-    if str(channel.parent_id) != str(forum_id):
-        return
-
-    thread_name = channel.name
-    secret = get_atelier_webhook_secret()
-    if not secret:
-        return
-
-    is_inquiry = thread_name.startswith('💬')
-    id_match = re.search(r'#(\d+)', thread_name)
-    if not id_match:
-        return
-
-    target_id = id_match.group(1)
-
-    if is_inquiry:
-        webhook_url = get_atelier_inquiry_webhook_url()
-        payload_data = {"inquiry_id": int(target_id), "mark_read": True}
-    else:
-        webhook_url = get_atelier_webhook_url()
-        payload_data = {"order_id": int(target_id), "mark_read": True}
-
-    try:
-        resp = requests.post(webhook_url, json=payload_data, headers={
-            "X-Atelier-Secret": secret,
-            "Content-Type": "application/json",
-        }, timeout=10)
-        if resp.status_code == 200:
-            print(f"[Atelier] Marked as read via 👀: {'inquiry' if is_inquiry else 'order'}={target_id}")
-        else:
-            print(f"[Atelier] Mark read failed: {resp.status_code}")
-    except Exception as e:
-        print(f"[Atelier] Mark read error: {e}")
 
 
 @bot.event
@@ -900,16 +734,73 @@ async def on_app_command_error(interaction: discord.Interaction, error):
 
 
 @bot.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    """Discordリアクション → アトリエ同期（👀=既読、✨=既読+リアクション）"""
+    if payload.user_id == bot.user.id:
+        return
+
+    channel = bot.get_channel(payload.channel_id)
+    if not isinstance(channel, discord.Thread):
+        return
+    if not get_forum_atelier() or str(channel.parent_id) != str(get_forum_atelier()):
+        return
+
+    emoji = str(payload.emoji)
+    if emoji not in ('👀', '✨'):
+        return
+
+    order_match = re.search(r'#(\d+)', channel.name)
+    if not order_match:
+        return
+
+    order_id = order_match.group(1)
+    webhook_url = get_atelier_webhook_url()
+    secret = get_atelier_webhook_secret()
+    if not webhook_url or not secret:
+        return
+
+    try:
+        if emoji == '✨':
+            # 既読 + ✨リアクションをアトリエに送信
+            base_url = webhook_url.rsplit('/webhook', 1)[0]
+            resp = requests.post(f"{base_url}/reaction", json={
+                "order_id": int(order_id),
+                "discord_message_id": str(payload.message_id),
+                "emoji": "✨",
+            }, headers={
+                "X-Atelier-Secret": secret,
+                "Content-Type": "application/json",
+            }, timeout=10)
+            if resp.status_code == 200:
+                print(f"[Atelier Reaction] ✨ sent for order={order_id}")
+            else:
+                print(f"[Atelier Reaction] Failed: {resp.status_code} {resp.text}")
+        elif emoji == '👀':
+            # 既読のみ
+            resp = requests.post(webhook_url, json={
+                "order_id": int(order_id),
+                "mark_read": True,
+            }, headers={
+                "X-Atelier-Secret": secret,
+                "Content-Type": "application/json",
+            }, timeout=10)
+            if resp.status_code == 200:
+                print(f"[Atelier Reaction] 👀 mark-read for order={order_id}")
+            else:
+                print(f"[Atelier Reaction] Failed: {resp.status_code} {resp.text}")
+    except Exception as e:
+        print(f"[Atelier Reaction] Error: {e}")
+
+
+@bot.event
 async def on_message(message):
-    """Discordメッセージを監視してLINEに転送 + テンプレートボタン再投稿"""
+    """Discordメッセージを監視 + テンプレートボタン再投稿"""
     print(f"[MSG] channel={message.channel.name if hasattr(message.channel, 'name') else 'DM'}, author={message.author}, bot={message.author.bot}")
 
-    # LINE対応/アトリエ フォーラムスレッド内のメッセージ → テンプレートボタン再投稿
+    # アトリエフォーラムスレッド内のメッセージ → テンプレートボタン再投稿
     if isinstance(message.channel, discord.Thread):
-        parent_id = str(message.channel.parent_id)
-        is_line_forum = get_forum_line() and parent_id == str(get_forum_line())
-        is_atelier_forum = get_forum_atelier() and parent_id == str(get_forum_atelier())
-        if is_line_forum or is_atelier_forum:
+        is_atelier_forum = get_forum_atelier() and str(message.channel.parent_id) == str(get_forum_atelier())
+        if is_atelier_forum:
             thread_key = str(message.channel.id)
             # 自分が投稿したボタンメッセージは無視（ループ防止）
             if message.id != _template_button_msg_ids.get(thread_key):
@@ -1369,61 +1260,6 @@ async def atelier_url(interaction: discord.Interaction, order_id: int):
         await interaction.followup.send(f"エラー: {e}", ephemeral=True)
 
 
-@bot.tree.command(name="notify", description="通知ONかチェック（アトリエスレッド内で使用）")
-async def notify_check(interaction: discord.Interaction):
-    """スレッドの顧客がPush通知をONにしているか確認"""
-    await interaction.response.defer(ephemeral=True)
-
-    thread = interaction.channel
-    if not isinstance(thread, discord.Thread):
-        await interaction.followup.send("スレッド内で使用してください", ephemeral=True)
-        return
-
-    forum_id = get_forum_atelier()
-    if not forum_id or str(thread.parent_id) != str(forum_id):
-        await interaction.followup.send("アトリエフォーラムのスレッドで使用してください", ephemeral=True)
-        return
-
-    thread_name = thread.name
-    is_inquiry = thread_name.startswith('💬')
-    id_match = re.search(r'#(\d+)', thread_name)
-    if not id_match:
-        await interaction.followup.send("スレッド名からIDを取得できません", ephemeral=True)
-        return
-
-    target_id = id_match.group(1)
-
-    # WordPress APIで通知登録状況を確認
-    wc_url = get_wc_url()
-    if is_inquiry:
-        api_url = f"{wc_url}/wp-json/i-tategu/v1/atelier/notify-status?type=inquiry&id={target_id}"
-    else:
-        api_url = f"{wc_url}/wp-json/i-tategu/v1/atelier/notify-status?type=order&id={target_id}"
-
-    secret = get_atelier_webhook_secret()
-    try:
-        resp = requests.get(api_url, headers={"X-Atelier-Secret": secret}, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            count = data.get('count', 0)
-            if count > 0:
-                emoji = "🔔"
-                label = f"通知ON（{count}台登録）"
-            else:
-                emoji = "🔕"
-                label = "通知OFF（未登録）"
-
-            type_label = "問い合わせ" if is_inquiry else "注文"
-            await interaction.followup.send(
-                f"{emoji} **{type_label} #{target_id}**: {label}",
-                ephemeral=True
-            )
-        else:
-            await interaction.followup.send(f"確認失敗: HTTP {resp.status_code}", ephemeral=True)
-    except Exception as e:
-        await interaction.followup.send(f"エラー: {e}", ephemeral=True)
-
-
 @bot.tree.command(name="overview", description="顧客一覧を更新")
 async def refresh_overview(interaction: discord.Interaction):
     """一覧更新コマンド"""
@@ -1522,14 +1358,12 @@ class ReplyTargetSelect(discord.ui.Select):
 
 
 class TemplateEditModal(discord.ui.Modal):
-    """テンプレート編集モーダル（複数ユーザー対応 / Instagram対応）"""
-    def __init__(self, template, customer_name, order_id, line_user_ids, platform='line', inquiry_id=None):
+    """テンプレート編集モーダル（アトリエ専用）"""
+    def __init__(self, template, customer_name, order_id, line_user_ids):
         self.template = template
         self.customer_name = customer_name
         self.order_id = order_id
-        self.inquiry_id = inquiry_id
         self.line_user_ids = line_user_ids  # [{'line_user_id': ..., 'display_name': ...}]
-        self.platform = platform  # 'line', 'instagram', 'atelier', or 'atelier_inquiry'
 
         title = template["label"]
         if template.get("status_action"):
@@ -1556,83 +1390,32 @@ class TemplateEditModal(discord.ui.Modal):
         message_text = self.message_input.value
         results = []
 
-        # 1. メッセージ送信（プラットフォーム別）
-        all_success = True
-        sent_names = []
-        platform_labels = {'line': 'LINE', 'instagram': 'Instagram', 'atelier': 'アトリエ', 'atelier_inquiry': 'お問い合わせ'}
-        platform_label = platform_labels.get(self.platform, self.platform)
-
-        if self.platform == 'atelier_inquiry':
-            # 問い合わせ: inquiry webhook で送信
-            webhook_url = get_atelier_inquiry_webhook_url()
-            secret = get_atelier_webhook_secret()
-            if webhook_url and secret and self.inquiry_id:
-                try:
-                    resp = requests.post(webhook_url, json={
-                        "inquiry_id": int(self.inquiry_id),
-                        "message": message_text,
-                        "image_url": "",
-                    }, headers={
-                        "X-Atelier-Secret": secret,
-                        "Content-Type": "application/json",
-                    }, timeout=10)
-                    if resp.status_code == 200:
-                        all_success = True
-                        sent_names.append(self.customer_name or "顧客")
-                    else:
-                        all_success = False
-                        print(f"[Atelier Inquiry Template] Webhook failed: {resp.status_code} {resp.text}")
-                except Exception as e:
-                    all_success = False
-                    print(f"[Atelier Inquiry Template] Webhook error: {e}")
-            else:
-                all_success = False
-        elif self.platform == 'atelier':
-            # アトリエ注文: WordPress webhook で送信
-            webhook_url = get_atelier_webhook_url()
-            secret = get_atelier_webhook_secret()
-            if webhook_url and secret and self.order_id:
-                try:
-                    resp = requests.post(webhook_url, json={
-                        "order_id": int(self.order_id),
-                        "message": message_text,
-                        "image_url": "",
-                    }, headers={
-                        "X-Atelier-Secret": secret,
-                        "Content-Type": "application/json",
-                    }, timeout=10)
-                    if resp.status_code == 200:
-                        all_success = True
-                        sent_names.append(self.customer_name or "顧客")
-                    else:
-                        all_success = False
-                        print(f"[Atelier Template] Webhook failed: {resp.status_code} {resp.text}")
-                except Exception as e:
-                    all_success = False
-                    print(f"[Atelier Template] Webhook error: {e}")
-            else:
-                all_success = False
-        else:
-            for user in self.line_user_ids:
-                if self.platform == 'instagram':
-                    success = send_instagram_message(user['line_user_id'], message_text)
+        # 1. アトリエ: WordPress webhook で送信
+        all_success = False
+        webhook_url = get_atelier_webhook_url()
+        secret = get_atelier_webhook_secret()
+        if webhook_url and secret and self.order_id:
+            try:
+                resp = requests.post(webhook_url, json={
+                    "order_id": int(self.order_id),
+                    "message": message_text,
+                    "image_url": "",
+                }, headers={
+                    "X-Atelier-Secret": secret,
+                    "Content-Type": "application/json",
+                }, timeout=10)
+                if resp.status_code == 200:
+                    all_success = True
                 else:
-                    success = send_line_message(user['line_user_id'], [
-                        {"type": "text", "text": message_text}
-                    ])
-                if success:
-                    sent_names.append(user['display_name'])
-                else:
-                    all_success = False
+                    print(f"[Atelier Template] Webhook failed: {resp.status_code} {resp.text}")
+            except Exception as e:
+                print(f"[Atelier Template] Webhook error: {e}")
 
-        if not sent_names and not (self.platform == 'atelier' and all_success):
-            await interaction.followup.send(f"❌ {platform_label}送信に失敗しました", ephemeral=True)
+        if not all_success:
+            await interaction.followup.send("❌ アトリエ送信に失敗しました", ephemeral=True)
             return
 
-        if len(self.line_user_ids) > 1:
-            results.append(f"✅ {platform_label}送信完了（{', '.join(sent_names)}）")
-        else:
-            results.append(f"✅ {platform_label}送信完了")
+        results.append("✅ アトリエ送信完了")
 
         # 2. WooCommerceステータス更新（一度だけ）
         status_action = self.template.get("status_action")
@@ -1668,13 +1451,11 @@ class TemplateEditModal(discord.ui.Modal):
                 new_status = CustomerStatus(status_action)
                 config = STATUS_CONFIG[new_status]
                 thread = interaction.channel
-                # 既存絵文字を除去（なければそのまま）
-                stripped = re.sub(
-                    r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F\U0001F4AC\U0001F3A8]\s*',
-                    '',
+                new_name = re.sub(
+                    r'^[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*',
+                    f"{config['emoji']} ",
                     thread.name
                 )
-                new_name = f"{config['emoji']} {stripped}"
                 if new_name != thread.name:
                     await thread.edit(name=new_name)
                     results.append("✅ スレッド名更新")
@@ -1718,13 +1499,7 @@ class TemplateEditModal(discord.ui.Modal):
             color=0x06C755
         )
         sent_embed.set_author(name=f"📤 {self.template['label']}")
-        footer_platforms = {'line': 'LINE送信済み', 'instagram': 'Instagram送信済み', 'atelier': 'アトリエ送信済み', 'atelier_inquiry': 'お問い合わせ送信済み'}
-        footer_platform = footer_platforms.get(self.platform, f'{self.platform}送信済み')
-        if len(self.line_user_ids) > 1:
-            names = ", ".join(u['display_name'] for u in self.line_user_ids)
-            sent_embed.set_footer(text=f"{footer_platform} ({names}) • {datetime.now().strftime('%m/%d %H:%M')}")
-        else:
-            sent_embed.set_footer(text=f"{footer_platform} • {datetime.now().strftime('%m/%d %H:%M')}")
+        sent_embed.set_footer(text=f"アトリエ送信済み • {datetime.now().strftime('%m/%d %H:%M')}")
         await thread.send(embed=sent_embed)
 
         # 8. 顧客一覧を更新
@@ -1738,55 +1513,63 @@ class TemplateEditModal(discord.ui.Modal):
 
 
 class TemplatePersistentView(discord.ui.View):
-    """テンプレートボタン常設ビュー（JSONから動的生成、Bot再起動後も動作）"""
-
-    # ステータスアクション付きテンプレート用のボタンスタイルマッピング
-    _STATUS_STYLES = {
-        'design-confirmed': discord.ButtonStyle.primary,
-        'produced': discord.ButtonStyle.primary,
-        'shipped': discord.ButtonStyle.success,
-    }
-
+    """テンプレートボタン常設ビュー（Bot再起動後も動作）"""
     def __init__(self):
         super().__init__(timeout=None)
+
+    async def _handle_button(self, interaction: discord.Interaction, template_id: str):
+        """ボタン押下時の共通処理（アトリエ専用）"""
         templates = load_templates()
-        nums = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+        template = next((t for t in templates if t["id"] == template_id), None)
+        if not template:
+            await interaction.response.send_message("テンプレートが見つかりません", ephemeral=True)
+            return
 
-        # テンプレートボタンを動的に追加（最大4行×5個=20個）
-        for i, tpl in enumerate(templates[:20]):
-            num = nums[i] if i < len(nums) else f"({i+1})"
-            style = self._STATUS_STYLES.get(tpl.get("status_action"), discord.ButtonStyle.secondary)
-            row = i // 5  # 5個ごとに次の行
-            if row > 3:
-                row = 3  # 最大row=3（row=4はテンプレ編集用）
+        thread = interaction.channel
+        if not isinstance(thread, discord.Thread):
+            await interaction.response.send_message("スレッド内で使用してください", ephemeral=True)
+            return
 
-            btn = discord.ui.Button(
-                label=f"{num} {tpl['label'].lstrip('①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳ ')}",
-                style=style,
-                custom_id=f"tpl_{tpl['id']}",
-                emoji=tpl.get("emoji"),
-                row=row,
-            )
-            btn.callback = self._make_callback(tpl["id"])
-            self.add_item(btn)
+        if not get_forum_atelier() or str(thread.parent_id) != str(get_forum_atelier()):
+            await interaction.response.send_message("❌ アトリエフォーラムのスレッド内で使用してください", ephemeral=True)
+            return
 
-        # テンプレ編集ボタン（最後の行）
-        manage_btn = discord.ui.Button(
-            label="テンプレ編集",
-            style=discord.ButtonStyle.secondary,
-            custom_id="tpl_manage",
-            emoji="✏️",
-            row=4,
-        )
-        manage_btn.callback = self._manage_callback
-        self.add_item(manage_btn)
+        customer_name, order_id = get_thread_customer_info(thread)
+        all_users = [{'line_user_id': '', 'display_name': customer_name}]
 
-    def _make_callback(self, template_id: str):
-        async def callback(interaction: discord.Interaction):
-            await self._handle_button(interaction, template_id)
-        return callback
+        modal = TemplateEditModal(template, customer_name, order_id, all_users)
+        await interaction.response.send_modal(modal)
 
-    async def _manage_callback(self, interaction: discord.Interaction):
+    @discord.ui.button(label="① あいさつ", style=discord.ButtonStyle.secondary, custom_id="tpl_greeting", emoji="👋", row=0)
+    async def btn_greeting(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "greeting")
+
+    @discord.ui.button(label="② デザイン確認", style=discord.ButtonStyle.secondary, custom_id="tpl_design_check", emoji="🎨", row=0)
+    async def btn_design_check(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "design_check")
+
+    @discord.ui.button(label="③ 確定", style=discord.ButtonStyle.primary, custom_id="tpl_design_confirmed", emoji="✅", row=0)
+    async def btn_design_confirmed(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "design_confirmed")
+
+    @discord.ui.button(label="④ 制作完了", style=discord.ButtonStyle.primary, custom_id="tpl_production_done", emoji="🎉", row=0)
+    async def btn_production_done(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "production_done")
+
+    @discord.ui.button(label="⑤ 発送完了", style=discord.ButtonStyle.success, custom_id="tpl_shipped", emoji="📦", row=1)
+    async def btn_shipped(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "shipped")
+
+    @discord.ui.button(label="⑥ お礼①", style=discord.ButtonStyle.secondary, custom_id="tpl_thanks_1", emoji="🙏", row=1)
+    async def btn_thanks_1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "thanks_1")
+
+    @discord.ui.button(label="⑦ お礼②", style=discord.ButtonStyle.secondary, custom_id="tpl_thanks_2", emoji="💐", row=1)
+    async def btn_thanks_2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "thanks_2")
+
+    @discord.ui.button(label="テンプレ編集", style=discord.ButtonStyle.secondary, custom_id="tpl_manage", emoji="✏️", row=2)
+    async def btn_manage(self, interaction: discord.Interaction, button: discord.ui.Button):
         """テンプレート管理メニュー"""
         templates = load_templates()
         options = []
@@ -1801,74 +1584,11 @@ class TemplatePersistentView(discord.ui.View):
             value="__new__",
             emoji="➕"
         ))
+
         view = discord.ui.View(timeout=120)
         select = TemplateManageSelect(options)
         view.add_item(select)
         await interaction.response.send_message("編集するテンプレートを選択:", view=view, ephemeral=True)
-
-    async def _handle_button(self, interaction: discord.Interaction, template_id: str):
-        """ボタン押下時の共通処理（複数ユーザー対応 / Instagram対応）"""
-        templates = load_templates()
-        template = next((t for t in templates if t["id"] == template_id), None)
-        if not template:
-            await interaction.response.send_message("テンプレートが見つかりません", ephemeral=True)
-            return
-
-        thread = interaction.channel
-        if not isinstance(thread, discord.Thread):
-            await interaction.response.send_message("スレッド内で使用してください", ephemeral=True)
-            return
-
-        # プラットフォーム判定
-        is_atelier = get_forum_atelier() and str(thread.parent_id) == str(get_forum_atelier())
-
-        if is_atelier:
-            # アトリエスレッド（問い合わせ or 注文）
-            is_inquiry_thread = thread.name.startswith('💬')
-            if is_inquiry_thread:
-                platform = 'atelier_inquiry'
-                customer_name, _ = get_thread_customer_info(thread)
-                inq_match = re.search(r'#(\d+)', thread.name)
-                inquiry_id = inq_match.group(1) if inq_match else None
-            else:
-                platform = 'atelier'
-                inquiry_id = None
-            customer_name, order_id = get_thread_customer_info(thread)
-            all_users = [{'line_user_id': '', 'display_name': customer_name}]
-        elif get_platform_from_thread(thread.id) == 'instagram':
-            # Instagram スレッド
-            platform = 'instagram'
-            ig_user_id = get_instagram_user_id_from_thread(thread.id)
-            if not ig_user_id:
-                await interaction.response.send_message("❌ Instagram User IDが見つかりません", ephemeral=True)
-                return
-            ig_map = load_instagram_thread_map()
-            ig_data = ig_map.get(ig_user_id, {})
-            customer_name, order_id = get_thread_customer_info(thread)
-            all_users = [{'line_user_id': ig_user_id, 'display_name': ig_data.get('display_name', customer_name)}]
-        else:
-            # LINE スレッド（従来ロジック）
-            platform = 'line'
-            all_users = get_all_line_users_from_thread(thread.id)
-            if not all_users:
-                line_user_id = await find_line_user_id_in_thread(thread)
-                if not line_user_id:
-                    await interaction.response.send_message("❌ LINE User IDが見つかりません", ephemeral=True)
-                    return
-                customer_name, order_id = get_thread_customer_info(thread)
-                all_users = [{'line_user_id': line_user_id, 'display_name': customer_name}]
-
-        # 顧客情報取得
-        customer_name, order_id = get_thread_customer_info(thread)
-        if not order_id and platform == 'line':
-            customer = get_customer(all_users[0]['line_user_id'])
-            if customer and customer.get("orders"):
-                order_id = str(customer["orders"][-1].get("order_id", ""))
-
-        # モーダル表示（プラットフォーム情報付き）
-        inq_id = locals().get('inquiry_id')
-        modal = TemplateEditModal(template, customer_name, order_id, all_users, platform=platform, inquiry_id=inq_id)
-        await interaction.response.send_modal(modal)
 
 
 class TemplateManageSelect(discord.ui.Select):
@@ -1929,22 +1649,16 @@ class TemplateManageModal(discord.ui.Modal):
 
         if self.is_new:
             new_id = f"custom_{len(templates) + 1}"
-            # ラベルに番号がなければ自動付与
-            label = self.label_input.value
-            nums = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
-            next_num = nums[len(templates)] if len(templates) < len(nums) else f"({len(templates)+1})"
-            if not re.match(r'^[①-⑳(]', label):
-                label = f"{next_num} {label}"
             templates.append({
                 "id": new_id,
-                "label": label,
+                "label": self.label_input.value,
                 "emoji": "💬",
                 "status_action": None,
                 "text": self.text_input.value,
             })
             save_templates(templates)
             await interaction.response.send_message(
-                f"✅ テンプレート「{self.label_input.value}」を追加しました\nボタンを更新しています...",
+                f"✅ テンプレート「{self.label_input.value}」を追加しました",
                 ephemeral=True
             )
         else:
@@ -1958,12 +1672,6 @@ class TemplateManageModal(discord.ui.Modal):
                 f"✅ テンプレート「{self.label_input.value}」を更新しました",
                 ephemeral=True
             )
-
-        # 新規追加時はボタンを再投稿して反映
-        if self.is_new:
-            thread = interaction.channel
-            if isinstance(thread, discord.Thread):
-                await post_template_buttons(thread)
 
 
 async def post_template_buttons(thread):
@@ -1992,25 +1700,21 @@ async def post_template_buttons(thread):
         _posting_buttons_lock.discard(thread_key)
 
 
-@bot.tree.command(name="template", description="LINEテンプレートボタンを表示")
+@bot.tree.command(name="template", description="テンプレートボタンを表示")
 async def send_template(interaction: discord.Interaction):
     """テンプレートボタン投稿コマンド"""
     channel = interaction.channel
 
     if not isinstance(channel, discord.Thread):
         await interaction.response.send_message(
-            "このコマンドは #LINE対応 または #atelier フォーラムのスレッド内で使用してください",
+            "このコマンドは #atelier フォーラムのスレッド内で使用してください",
             ephemeral=True
         )
         return
 
-    parent_id = str(channel.parent_id)
-    allowed_forums = [str(get_forum_line())]
-    if get_forum_atelier():
-        allowed_forums.append(str(get_forum_atelier()))
-    if parent_id not in allowed_forums:
+    if not get_forum_atelier() or str(channel.parent_id) != str(get_forum_atelier()):
         await interaction.response.send_message(
-            "このコマンドは #LINE対応 または #atelier フォーラムのスレッド内で使用してください",
+            "このコマンドは #atelier フォーラムのスレッド内で使用してください",
             ephemeral=True
         )
         return
@@ -2107,41 +1811,27 @@ def api_get_overview():
 
 @api.route("/api/mark-read", methods=["POST"])
 def api_mark_read():
-    """お客様がメッセージを既読 → Discordに👀リアクション追加"""
-    data = request.json or {}
-    discord_message_ids = data.get("discord_message_ids", [])
-    thread_id = data.get("discord_thread_id")
+    """WordPress → Discord: お客様がメッセージを読んだ時に👀リアクション追加"""
+    data = request.get_json(force=True, silent=True) or {}
+    discord_msg_ids = data.get("discord_message_ids", [])
+    discord_thread_id = data.get("discord_thread_id", "")
 
-    if not discord_message_ids or not thread_id:
-        return jsonify({"error": "Missing params"}), 400
+    if not discord_msg_ids or not discord_thread_id:
+        return jsonify({"error": "Missing parameters"}), 400
 
-    async def add_read_reactions():
-        try:
-            channel = bot.get_channel(int(thread_id))
-            if not channel:
-                channel = await bot.fetch_channel(int(thread_id))
-            if channel:
-                for msg_id in discord_message_ids:
-                    try:
-                        msg = await channel.fetch_message(int(msg_id))
-                        # 既に👀が付いていなければ追加
-                        has_eyes = any(str(r.emoji) == '👀' and r.me for r in msg.reactions)
-                        if not has_eyes:
-                            await msg.add_reaction("👀")
-                    except Exception as e:
-                        print(f"[MarkRead] Failed for msg {msg_id}: {e}")
-        except Exception as e:
-            print(f"[MarkRead] Error: {e}")
+    async def add_reactions():
+        channel = bot.get_channel(int(discord_thread_id))
+        if not channel:
+            return
+        for msg_id in discord_msg_ids:
+            try:
+                msg = await channel.fetch_message(int(msg_id))
+                await msg.add_reaction("👀")
+            except Exception as e:
+                print(f"[mark-read] Failed to add 👀 to {msg_id}: {e}")
 
-    asyncio.run_coroutine_threadsafe(add_read_reactions(), bot.loop)
-    return jsonify({"success": True, "count": len(discord_message_ids)})
-
-
-@api.route("/api/notify-changed", methods=["POST"])
-def api_notify_changed():
-    """プッシュ通知登録変更 → 顧客一覧を更新"""
-    asyncio.run_coroutine_threadsafe(update_overview_channel(), bot.loop)
-    return jsonify({"success": True})
+    asyncio.run_coroutine_threadsafe(add_reactions(), bot.loop)
+    return jsonify({"status": "ok"})
 
 
 @api.route("/health", methods=["GET"])
