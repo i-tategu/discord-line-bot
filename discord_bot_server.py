@@ -91,6 +91,9 @@ def get_atelier_webhook_url():
 def get_atelier_webhook_secret():
     return os.environ.get("ATELIER_WEBHOOK_SECRET", "")
 
+def get_atelier_inquiry_webhook_url():
+    return os.environ.get("ATELIER_INQUIRY_WEBHOOK_URL", "https://i-tategu-shop.com/wp-json/i-tategu/v1/atelier/inquiry/webhook")
+
 def get_canva_access_token():
     access, _ = get_current_tokens()
     return access or os.environ.get("CANVA_ACCESS_TOKEN")
@@ -322,7 +325,7 @@ def save_templates(templates):
 
 def get_thread_customer_info(thread):
     """フォーラムスレッドから顧客情報を取得"""
-    name_match = re.search(r'[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*(?:#\d+\s+)?(.+?)\s*様', thread.name)
+    name_match = re.search(r'[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F\U0001F4AC\U0001F3A8]\s*(?:#\d+\s+)?(.+?)\s*様', thread.name)
     customer_name = name_match.group(1) if name_match else "お客様"
 
     order_match = re.search(r'#(\d+)', thread.name)
@@ -664,17 +667,29 @@ async def on_ready():
 
 
 async def handle_atelier_message(message):
-    """#atelier フォーラムのメッセージをWordPress webhook に転送"""
-    # スレッド名から注文番号を取得（例: "🎨 #1865 はるか 様"）
+    """#atelier フォーラムのメッセージをWordPress webhook に転送（注文 & 問い合わせ対応）"""
     thread_name = message.channel.name
-    order_match = re.search(r'#(\d+)', thread_name)
-    if not order_match:
-        print(f"[Atelier] Could not extract order ID from thread: {thread_name}")
-        return
-
-    order_id = order_match.group(1)
-    webhook_url = get_atelier_webhook_url()
     secret = get_atelier_webhook_secret()
+
+    # 💬 プレフィックス → 問い合わせスレッド
+    is_inquiry = thread_name.startswith('💬')
+
+    if is_inquiry:
+        # 問い合わせ: スレッド名から inquiry_id を取得（例: "💬 #1 石橋伯昂 様"）
+        id_match = re.search(r'#(\d+)', thread_name)
+        if not id_match:
+            print(f"[Atelier Inquiry] Could not extract inquiry ID from thread: {thread_name}")
+            return
+        inquiry_id = id_match.group(1)
+        webhook_url = get_atelier_inquiry_webhook_url()
+    else:
+        # 注文: スレッド名から order_id を取得（例: "🎨 #1865 はるか 様"）
+        order_match = re.search(r'#(\d+)', thread_name)
+        if not order_match:
+            print(f"[Atelier] Could not extract order ID from thread: {thread_name}")
+            return
+        order_id = order_match.group(1)
+        webhook_url = get_atelier_webhook_url()
 
     if not webhook_url or not secret:
         print("[Atelier] Webhook URL or secret not configured")
@@ -693,11 +708,18 @@ async def handle_atelier_message(message):
     if not text and not image_url:
         return
 
-    payload = {
-        "order_id": int(order_id),
-        "message": text,
-        "image_url": image_url,
-    }
+    if is_inquiry:
+        payload = {
+            "inquiry_id": int(inquiry_id),
+            "message": text,
+            "image_url": image_url,
+        }
+    else:
+        payload = {
+            "order_id": int(order_id),
+            "message": text,
+            "image_url": image_url,
+        }
 
     try:
         resp = requests.post(webhook_url, json=payload, headers={
@@ -707,7 +729,8 @@ async def handle_atelier_message(message):
 
         if resp.status_code == 200:
             await message.add_reaction("✅")
-            print(f"[Atelier] Forwarded to WP: order={order_id}")
+            label = f"inquiry={inquiry_id}" if is_inquiry else f"order={order_id}"
+            print(f"[Atelier] Forwarded to WP: {label}")
         else:
             await message.add_reaction("❌")
             print(f"[Atelier] WP webhook failed: {resp.status_code} {resp.text}")
@@ -1301,12 +1324,13 @@ class ReplyTargetSelect(discord.ui.Select):
 
 class TemplateEditModal(discord.ui.Modal):
     """テンプレート編集モーダル（複数ユーザー対応 / Instagram対応）"""
-    def __init__(self, template, customer_name, order_id, line_user_ids, platform='line'):
+    def __init__(self, template, customer_name, order_id, line_user_ids, platform='line', inquiry_id=None):
         self.template = template
         self.customer_name = customer_name
         self.order_id = order_id
+        self.inquiry_id = inquiry_id
         self.line_user_ids = line_user_ids  # [{'line_user_id': ..., 'display_name': ...}]
-        self.platform = platform  # 'line', 'instagram', or 'atelier'
+        self.platform = platform  # 'line', 'instagram', 'atelier', or 'atelier_inquiry'
 
         title = template["label"]
         if template.get("status_action"):
@@ -1336,11 +1360,36 @@ class TemplateEditModal(discord.ui.Modal):
         # 1. メッセージ送信（プラットフォーム別）
         all_success = True
         sent_names = []
-        platform_labels = {'line': 'LINE', 'instagram': 'Instagram', 'atelier': 'アトリエ'}
+        platform_labels = {'line': 'LINE', 'instagram': 'Instagram', 'atelier': 'アトリエ', 'atelier_inquiry': 'お問い合わせ'}
         platform_label = platform_labels.get(self.platform, self.platform)
 
-        if self.platform == 'atelier':
-            # アトリエ: WordPress webhook で送信
+        if self.platform == 'atelier_inquiry':
+            # 問い合わせ: inquiry webhook で送信
+            webhook_url = get_atelier_inquiry_webhook_url()
+            secret = get_atelier_webhook_secret()
+            if webhook_url and secret and self.inquiry_id:
+                try:
+                    resp = requests.post(webhook_url, json={
+                        "inquiry_id": int(self.inquiry_id),
+                        "message": message_text,
+                        "image_url": "",
+                    }, headers={
+                        "X-Atelier-Secret": secret,
+                        "Content-Type": "application/json",
+                    }, timeout=10)
+                    if resp.status_code == 200:
+                        all_success = True
+                        sent_names.append(self.customer_name or "顧客")
+                    else:
+                        all_success = False
+                        print(f"[Atelier Inquiry Template] Webhook failed: {resp.status_code} {resp.text}")
+                except Exception as e:
+                    all_success = False
+                    print(f"[Atelier Inquiry Template] Webhook error: {e}")
+            else:
+                all_success = False
+        elif self.platform == 'atelier':
+            # アトリエ注文: WordPress webhook で送信
             webhook_url = get_atelier_webhook_url()
             secret = get_atelier_webhook_secret()
             if webhook_url and secret and self.order_id:
@@ -1468,7 +1517,7 @@ class TemplateEditModal(discord.ui.Modal):
             color=0x06C755
         )
         sent_embed.set_author(name=f"📤 {self.template['label']}")
-        footer_platforms = {'line': 'LINE送信済み', 'instagram': 'Instagram送信済み', 'atelier': 'アトリエ送信済み'}
+        footer_platforms = {'line': 'LINE送信済み', 'instagram': 'Instagram送信済み', 'atelier': 'アトリエ送信済み', 'atelier_inquiry': 'お問い合わせ送信済み'}
         footer_platform = footer_platforms.get(self.platform, f'{self.platform}送信済み')
         if len(self.line_user_ids) > 1:
             names = ", ".join(u['display_name'] for u in self.line_user_ids)
@@ -1509,8 +1558,17 @@ class TemplatePersistentView(discord.ui.View):
         is_atelier = get_forum_atelier() and str(thread.parent_id) == str(get_forum_atelier())
 
         if is_atelier:
-            # アトリエスレッド
-            platform = 'atelier'
+            # アトリエスレッド（問い合わせ or 注文）
+            is_inquiry = thread.name.startswith('💬')
+            if is_inquiry:
+                platform = 'atelier_inquiry'
+                customer_name, _ = get_thread_customer_info(thread)
+                # スレッド名から inquiry_id を取得
+                inq_match = re.search(r'#(\d+)', thread.name)
+                inquiry_id = inq_match.group(1) if inq_match else None
+            else:
+                platform = 'atelier'
+                inquiry_id = None
             customer_name, order_id = get_thread_customer_info(thread)
             all_users = [{'line_user_id': '', 'display_name': customer_name}]
         elif get_platform_from_thread(thread.id) == 'instagram':
@@ -1544,7 +1602,8 @@ class TemplatePersistentView(discord.ui.View):
                 order_id = str(customer["orders"][-1].get("order_id", ""))
 
         # モーダル表示（プラットフォーム情報付き）
-        modal = TemplateEditModal(template, customer_name, order_id, all_users, platform=platform)
+        inq_id = locals().get('inquiry_id')
+        modal = TemplateEditModal(template, customer_name, order_id, all_users, platform=platform, inquiry_id=inq_id)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="① あいさつ", style=discord.ButtonStyle.secondary, custom_id="tpl_greeting", emoji="👋", row=0)
