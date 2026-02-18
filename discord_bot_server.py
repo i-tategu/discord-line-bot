@@ -1812,9 +1812,15 @@ class TemplateManageModal(discord.ui.Modal):
 
         if self.is_new:
             new_id = f"custom_{len(templates) + 1}"
+            # ラベルに番号がなければ自動付与
+            label = self.label_input.value
+            nums = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+            next_num = nums[len(templates)] if len(templates) < len(nums) else f"({len(templates)+1})"
+            if not re.match(r'^[①-⑳(]', label):
+                label = f"{next_num} {label}"
             templates.append({
                 "id": new_id,
-                "label": self.label_input.value,
+                "label": label,
                 "emoji": "💬",
                 "status_action": None,
                 "text": self.text_input.value,
