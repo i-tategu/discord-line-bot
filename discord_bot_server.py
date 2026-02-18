@@ -1660,27 +1660,31 @@ class TemplatePersistentView(discord.ui.View):
     async def btn_greeting(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._handle_button(interaction, "greeting")
 
-    @discord.ui.button(label="② デザイン確認", style=discord.ButtonStyle.secondary, custom_id="tpl_design_check", emoji="🎨", row=0)
+    @discord.ui.button(label="② ページ案内", style=discord.ButtonStyle.secondary, custom_id="tpl_atelier_intro", emoji="🔗", row=0)
+    async def btn_atelier_intro(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle_button(interaction, "atelier_intro")
+
+    @discord.ui.button(label="③ デザイン確認", style=discord.ButtonStyle.secondary, custom_id="tpl_design_check", emoji="🎨", row=0)
     async def btn_design_check(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._handle_button(interaction, "design_check")
 
-    @discord.ui.button(label="③ 確定", style=discord.ButtonStyle.primary, custom_id="tpl_design_confirmed", emoji="✅", row=0)
+    @discord.ui.button(label="④ 確定", style=discord.ButtonStyle.primary, custom_id="tpl_design_confirmed", emoji="✅", row=0)
     async def btn_design_confirmed(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._handle_button(interaction, "design_confirmed")
 
-    @discord.ui.button(label="④ 制作完了", style=discord.ButtonStyle.primary, custom_id="tpl_production_done", emoji="🎉", row=0)
+    @discord.ui.button(label="⑤ 制作完了", style=discord.ButtonStyle.primary, custom_id="tpl_production_done", emoji="🎉", row=1)
     async def btn_production_done(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._handle_button(interaction, "production_done")
 
-    @discord.ui.button(label="⑤ 発送完了", style=discord.ButtonStyle.success, custom_id="tpl_shipped", emoji="📦", row=1)
+    @discord.ui.button(label="⑥ 発送完了", style=discord.ButtonStyle.success, custom_id="tpl_shipped", emoji="📦", row=1)
     async def btn_shipped(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._handle_button(interaction, "shipped")
 
-    @discord.ui.button(label="⑥ お礼①", style=discord.ButtonStyle.secondary, custom_id="tpl_thanks_1", emoji="🙏", row=1)
+    @discord.ui.button(label="⑦ お礼①", style=discord.ButtonStyle.secondary, custom_id="tpl_thanks_1", emoji="🙏", row=1)
     async def btn_thanks_1(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._handle_button(interaction, "thanks_1")
 
-    @discord.ui.button(label="⑦ お礼②", style=discord.ButtonStyle.secondary, custom_id="tpl_thanks_2", emoji="💐", row=1)
+    @discord.ui.button(label="⑧ お礼②", style=discord.ButtonStyle.secondary, custom_id="tpl_thanks_2", emoji="💐", row=1)
     async def btn_thanks_2(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._handle_button(interaction, "thanks_2")
 
