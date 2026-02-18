@@ -740,6 +740,57 @@ async def handle_atelier_message(message):
 
 
 @bot.event
+async def on_raw_reaction_add(payload):
+    """👀リアクションで既読マーク（#atelierフォーラムのみ）"""
+    if str(payload.emoji) != '👀':
+        return
+    if payload.user_id == bot.user.id:
+        return
+
+    # アトリエフォーラムのスレッドか確認
+    forum_id = get_forum_atelier()
+    if not forum_id:
+        return
+
+    channel = bot.get_channel(payload.channel_id)
+    if not isinstance(channel, discord.Thread):
+        return
+    if str(channel.parent_id) != str(forum_id):
+        return
+
+    thread_name = channel.name
+    secret = get_atelier_webhook_secret()
+    if not secret:
+        return
+
+    is_inquiry = thread_name.startswith('💬')
+    id_match = re.search(r'#(\d+)', thread_name)
+    if not id_match:
+        return
+
+    target_id = id_match.group(1)
+
+    if is_inquiry:
+        webhook_url = get_atelier_inquiry_webhook_url()
+        payload_data = {"inquiry_id": int(target_id), "mark_read": True}
+    else:
+        webhook_url = get_atelier_webhook_url()
+        payload_data = {"order_id": int(target_id), "mark_read": True}
+
+    try:
+        resp = requests.post(webhook_url, json=payload_data, headers={
+            "X-Atelier-Secret": secret,
+            "Content-Type": "application/json",
+        }, timeout=10)
+        if resp.status_code == 200:
+            print(f"[Atelier] Marked as read via 👀: {'inquiry' if is_inquiry else 'order'}={target_id}")
+        else:
+            print(f"[Atelier] Mark read failed: {resp.status_code}")
+    except Exception as e:
+        print(f"[Atelier] Mark read error: {e}")
+
+
+@bot.event
 async def on_error(event, *args, **kwargs):
     """エラーログ"""
     import traceback
