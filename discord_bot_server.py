@@ -88,6 +88,9 @@ def get_forum_atelier():
 def get_atelier_webhook_url():
     return os.environ.get("ATELIER_WEBHOOK_URL", "https://i-tategu-shop.com/wp-json/i-tategu/v1/atelier/webhook")
 
+def get_atelier_inquiry_webhook_url():
+    return os.environ.get("ATELIER_INQUIRY_WEBHOOK_URL", "https://i-tategu-shop.com/wp-json/i-tategu/v1/atelier/inquiry/webhook")
+
 def get_atelier_webhook_secret():
     return os.environ.get("ATELIER_WEBHOOK_SECRET", "")
 
@@ -665,19 +668,11 @@ async def on_ready():
 
 async def handle_atelier_message(message):
     """#atelier フォーラムのメッセージをWordPress webhook に転送"""
-    # スレッド名から注文番号を取得（例: "🎨 #1865 はるか 様"）
     thread_name = message.channel.name
-    order_match = re.search(r'#(\d+)', thread_name)
-    if not order_match:
-        print(f"[Atelier] Could not extract order ID from thread: {thread_name}")
-        return
-
-    order_id = order_match.group(1)
-    webhook_url = get_atelier_webhook_url()
     secret = get_atelier_webhook_secret()
 
-    if not webhook_url or not secret:
-        print("[Atelier] Webhook URL or secret not configured")
+    if not secret:
+        print("[Atelier] Webhook secret not configured")
         return
 
     # テキストメッセージ
@@ -693,11 +688,52 @@ async def handle_atelier_message(message):
     if not text and not image_url:
         return
 
-    payload = {
-        "order_id": int(order_id),
-        "message": text,
-        "image_url": image_url,
-    }
+    # 💬プレフィックス → 問い合わせスレッド
+    is_inquiry = thread_name.startswith("💬")
+
+    if is_inquiry:
+        # 問い合わせスレッド: スレッドの初回embedからinquiry_idを取得
+        inquiry_id = None
+        async for hist_msg in message.channel.history(limit=5, oldest_first=True):
+            for embed in hist_msg.embeds:
+                if embed.title and "お問い合わせ #" in embed.title:
+                    match = re.search(r'#(\d+)', embed.title)
+                    if match:
+                        inquiry_id = int(match.group(1))
+                        break
+            if inquiry_id:
+                break
+
+        if not inquiry_id:
+            print(f"[Atelier] Could not extract inquiry ID from thread: {thread_name}")
+            return
+
+        webhook_url = get_atelier_inquiry_webhook_url()
+        payload = {
+            "inquiry_id": inquiry_id,
+            "message": text,
+            "image_url": image_url,
+        }
+        label = f"inquiry={inquiry_id}"
+    else:
+        # 注文スレッド: #ORDER_ID を抽出
+        order_match = re.search(r'#(\d+)', thread_name)
+        if not order_match:
+            print(f"[Atelier] Could not extract order ID from thread: {thread_name}")
+            return
+
+        order_id = order_match.group(1)
+        webhook_url = get_atelier_webhook_url()
+        payload = {
+            "order_id": int(order_id),
+            "message": text,
+            "image_url": image_url,
+        }
+        label = f"order={order_id}"
+
+    if not webhook_url:
+        print("[Atelier] Webhook URL not configured")
+        return
 
     try:
         resp = requests.post(webhook_url, json=payload, headers={
@@ -707,7 +743,7 @@ async def handle_atelier_message(message):
 
         if resp.status_code == 200:
             await message.add_reaction("✅")
-            print(f"[Atelier] Forwarded to WP: order={order_id}")
+            print(f"[Atelier] Forwarded to WP: {label}")
         else:
             await message.add_reaction("❌")
             print(f"[Atelier] WP webhook failed: {resp.status_code} {resp.text}")
