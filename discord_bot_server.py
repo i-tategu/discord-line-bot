@@ -1797,6 +1797,23 @@ def api_add_customer():
     return jsonify({"success": True, "customer": customer})
 
 
+@api.route("/api/customer/delete", methods=["POST"])
+def api_delete_customer():
+    """顧客削除API"""
+    data = request.json
+    customer_key = data.get("customer_key")
+    if not customer_key:
+        return jsonify({"error": "customer_key required"}), 400
+
+    customers = load_customers()
+    if customer_key in customers:
+        deleted = customers.pop(customer_key)
+        save_customers(customers)
+        asyncio.run_coroutine_threadsafe(update_overview_channel(), bot.loop)
+        return jsonify({"success": True, "deleted": deleted.get("display_name", "")})
+    return jsonify({"error": "customer not found"}), 404
+
+
 @api.route("/api/overview", methods=["GET"])
 def api_get_overview():
     """一覧取得API"""
