@@ -690,48 +690,33 @@ async def handle_atelier_message(message):
     if not text and not image_url:
         return
 
-    # 💬プレフィックス → 問い合わせスレッド
+    # 💬プレフィックス → 問い合わせスレッド / それ以外 → 注文スレッド
     is_inquiry = thread_name.startswith("💬")
 
+    # スレッド名から #数字 を抽出（共通）
+    id_match = re.search(r'#(\d+)', thread_name)
+    if not id_match:
+        print(f"[Atelier] Could not extract ID from thread: {thread_name}")
+        return
+
+    extracted_id = id_match.group(1)
+
     if is_inquiry:
-        # 問い合わせスレッド: スレッドの初回embedからinquiry_idを取得
-        inquiry_id = None
-        async for hist_msg in message.channel.history(limit=5, oldest_first=True):
-            for embed in hist_msg.embeds:
-                if embed.title and "お問い合わせ #" in embed.title:
-                    match = re.search(r'#(\d+)', embed.title)
-                    if match:
-                        inquiry_id = int(match.group(1))
-                        break
-            if inquiry_id:
-                break
-
-        if not inquiry_id:
-            print(f"[Atelier] Could not extract inquiry ID from thread: {thread_name}")
-            return
-
         webhook_url = get_atelier_inquiry_webhook_url()
         payload = {
-            "inquiry_id": inquiry_id,
+            "inquiry_id": int(extracted_id),
             "message": text,
             "image_url": image_url,
         }
-        label = f"inquiry={inquiry_id}"
+        label = f"inquiry={extracted_id}"
     else:
-        # 注文スレッド: #ORDER_ID を抽出
-        order_match = re.search(r'#(\d+)', thread_name)
-        if not order_match:
-            print(f"[Atelier] Could not extract order ID from thread: {thread_name}")
-            return
-
-        order_id = order_match.group(1)
         webhook_url = get_atelier_webhook_url()
         payload = {
-            "order_id": int(order_id),
+            "order_id": int(extracted_id),
             "message": text,
             "image_url": image_url,
         }
-        label = f"order={order_id}"
+        label = f"order={extracted_id}"
 
     if not webhook_url:
         print("[Atelier] Webhook URL not configured")
@@ -1558,16 +1543,10 @@ class TemplatePersistentView(discord.ui.View):
             is_inquiry_thread = thread.name.startswith("💬")
             if is_inquiry_thread:
                 platform = 'atelier_inquiry'
-                # 初回embedからinquiry_idを取得
-                async for hist_msg in thread.history(limit=5, oldest_first=True):
-                    for embed in hist_msg.embeds:
-                        if embed.title and "お問い合わせ #" in embed.title:
-                            match = re.search(r'#(\d+)', embed.title)
-                            if match:
-                                inquiry_id = int(match.group(1))
-                                break
-                    if inquiry_id:
-                        break
+                # スレッド名から #数字 でinquiry_idを取得
+                inq_match = re.search(r'#(\d+)', thread.name)
+                if inq_match:
+                    inquiry_id = int(inq_match.group(1))
             else:
                 platform = 'atelier'
             customer_name, order_id = get_thread_customer_info(thread)
