@@ -1040,6 +1040,55 @@ async def on_interaction(interaction: discord.Interaction):
         await handle_shipped(interaction, order_id)
 
 
+def parse_shipping_from_embed(message):
+    """Embedフィールドから発送情報を解析（INQ注文用）"""
+    if not message.embeds:
+        return None
+    embed = message.embeds[0]
+    data = {}
+    for field in embed.fields:
+        if field.name == "📞 電話":
+            data["phone"] = field.value
+        elif field.name == "📦 商品":
+            data["product"] = field.value
+        elif field.name == "〒 住所":
+            data["address_raw"] = field.value
+        elif field.name == "💰 金額":
+            data["price"] = field.value
+    # タイトルから名前を取得: "🟡 未発送 | #INQ-X name 様"
+    if embed.title:
+        import re
+        m = re.search(r'\|\s*#\S+\s+(.+?)\s*様', embed.title)
+        if m:
+            data["name"] = m.group(1)
+    # 住所を解析: "851-2102 長崎県西彼杵郡時津町浜田郷721-1"
+    if "address_raw" in data:
+        addr = data["address_raw"]
+        parts = addr.split(" ", 1)
+        if len(parts) >= 2:
+            data["postcode"] = parts[0]
+            full = parts[1]
+            # 都道府県を分離
+            import re
+            pm = re.match(r'(北海道|.{2,3}[都道府県])(.*)', full)
+            if pm:
+                data["state"] = pm.group(1)
+                rest = pm.group(2)
+                # 市区町村と番地の分離（数字の直前まで）
+                cm = re.match(r'(.+?[市区町村郡])(.*)', rest)
+                if cm:
+                    data["city"] = cm.group(1)
+                    data["address1"] = cm.group(2).strip()
+                else:
+                    data["city"] = rest
+                    data["address1"] = ""
+            else:
+                data["state"] = ""
+                data["city"] = full
+                data["address1"] = ""
+    return data
+
+
 async def handle_b2_autofill(interaction: discord.Interaction, order_id: str):
     """B2自動入力キューをセット（Tampermonkeyがポーリングで検出）"""
     await interaction.response.defer(ephemeral=True)
@@ -1052,9 +1101,18 @@ async def handle_b2_autofill(interaction: discord.Interaction, order_id: str):
     try:
         url = f"{wc_url}/wp-json/i-tategu/v1/b2-queue"
         shipping_token = os.environ.get("SHIPPING_API_TOKEN", "itg_ship_2026")
+
+        payload = {"order_id": order_id}
+
+        # INQ注文: Embedから発送データを抽出して直接送信
+        if order_id.startswith("INQ-"):
+            shipping_data = parse_shipping_from_embed(interaction.message)
+            if shipping_data:
+                payload["shipping_data"] = shipping_data
+
         response = requests.post(
             url,
-            json={"order_id": order_id},
+            json=payload,
             headers={
                 "X-Shipping-Token": shipping_token,
                 "Content-Type": "application/json",
@@ -1082,16 +1140,40 @@ async def handle_b2_copy(interaction: discord.Interaction, order_id: str):
     """B2クラウド用データを表示"""
     await interaction.response.defer(ephemeral=True)
 
-    # WooCommerceから注文情報取得
-    wc_url = get_wc_url()
-    wc_key = get_wc_consumer_key()
-    wc_secret = get_wc_consumer_secret()
-
-    if not all([wc_url, wc_key, wc_secret]):
-        await interaction.followup.send("WooCommerce設定がありません", ephemeral=True)
-        return
-
     try:
+        # INQ注文: Embedから直接データ取得
+        if order_id.startswith("INQ-"):
+            sd = parse_shipping_from_embed(interaction.message)
+            if not sd:
+                await interaction.followup.send("Embedからデータを取得できません", ephemeral=True)
+                return
+            b2_data = f"""```
+【B2クラウド入力用】
+━━━━━━━━━━━━━━━━━━━━
+郵便番号: {sd.get('postcode', '')}
+都道府県: {sd.get('state', '')}
+市区町村: {sd.get('city', '')}
+番地: {sd.get('address1', '')}
+━━━━━━━━━━━━━━━━━━━━
+届け先名: {sd.get('name', '')}
+電話番号: {sd.get('phone', '')}
+━━━━━━━━━━━━━━━━━━━━
+品名: {sd.get('product', '一枚板結婚証明書')}
+個数: 1
+━━━━━━━━━━━━━━━━━━━━
+```"""
+            await interaction.followup.send(b2_data, ephemeral=True)
+            return
+
+        # WooCommerce注文: APIから取得
+        wc_url = get_wc_url()
+        wc_key = get_wc_consumer_key()
+        wc_secret = get_wc_consumer_secret()
+
+        if not all([wc_url, wc_key, wc_secret]):
+            await interaction.followup.send("WooCommerce設定がありません", ephemeral=True)
+            return
+
         url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}"
         response = requests.get(url, auth=(wc_key, wc_secret))
         if response.status_code != 200:
