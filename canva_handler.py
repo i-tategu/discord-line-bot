@@ -1975,6 +1975,57 @@ def add_cross_links_to_message(bot_token, channel_id, message_id, links_field):
         return False
 
 
+def add_cross_links_to_atelier_thread(bot_token, thread_id, links_field):
+    """アトリエスレッドの最初のメッセージに関連リンクフィールドを追加"""
+    url = f"https://discord.com/api/v10/channels/{thread_id}/messages"
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        # スレッドの最初のメッセージを取得（after=0, limit=1 で最古のメッセージ）
+        response = requests.get(url, params={"limit": 5}, headers=headers)
+        if response.status_code != 200:
+            print(f"[CrossLink] Failed to get atelier messages: {response.status_code}")
+            return False
+
+        messages = response.json()
+        if not messages:
+            print(f"[CrossLink] No messages in atelier thread {thread_id}")
+            return False
+
+        # 最初のメッセージ（embedを持つBot投稿）を探す
+        target_msg = None
+        for msg in reversed(messages):
+            if msg.get("embeds"):
+                target_msg = msg
+                break
+
+        if not target_msg:
+            print(f"[CrossLink] No embed message found in atelier thread {thread_id}")
+            return False
+
+        msg_id = target_msg["id"]
+        embeds = target_msg.get("embeds", [])
+        if embeds:
+            embeds[-1]["fields"] = embeds[-1].get("fields", []) + [
+                {"name": "📎 関連リンク", "value": links_field, "inline": False}
+            ]
+
+        edit_url = f"https://discord.com/api/v10/channels/{thread_id}/messages/{msg_id}"
+        response = requests.patch(edit_url, json={"embeds": embeds}, headers=headers)
+        if response.status_code == 200:
+            print(f"[CrossLink] Updated atelier thread {thread_id}")
+            return True
+        else:
+            print(f"[CrossLink] Failed to update atelier: {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"[CrossLink] Atelier error: {e}")
+        return False
+
+
 def clear_processing_lock(order_id, wc_url, wc_key, wc_secret):
     """処理中ロックを解除（失敗時用）"""
     url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}?consumer_key={wc_key}&consumer_secret={wc_secret}"
@@ -2267,6 +2318,13 @@ def process_order(order_id, config):
                 if atelier_thread_id:
                     shipping_links += f"\n[🎨 アトリエ](https://discord.com/channels/{guild_id}/{atelier_thread_id})"
                 add_cross_links_to_message(bot_token, shipping_ch, shipping_msg_id, shipping_links)
+
+                # ⑤ → ① + ③ へのリンク（アトリエスレッド → 注文通知・発送管理）
+                if atelier_thread_id:
+                    atelier_links = f"[🛒 注文通知](https://discord.com/channels/{guild_id}/{notify_ch}/{notify_msg_id})"
+                    atelier_links += f"\n[📦 発送管理](https://discord.com/channels/{guild_id}/{shipping_ch}/{shipping_msg_id})"
+                    # アトリエスレッドの最初のメッセージに関連リンクを追加
+                    add_cross_links_to_atelier_thread(bot_token, atelier_thread_id, atelier_links)
 
                 print(f"[Canva] Cross-links established between notifications")
 
