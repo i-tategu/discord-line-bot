@@ -325,8 +325,10 @@ def save_templates(templates):
 
 def get_thread_customer_info(thread):
     """フォーラムスレッドから顧客情報を取得"""
-    name_match = re.search(r'[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F]\s*(?:#\d+\s+)?(.+?)\s*様', thread.name)
-    customer_name = name_match.group(1) if name_match else "お客様"
+    name_match = re.search(r'[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F\U0001F4AC]\s*(?:#\d+\s+)?(.+?)\s*(?:様|$)', thread.name)
+    customer_name = name_match.group(1).rstrip() if name_match else "お客様"
+    # 「（お問い合わせ）」を除去
+    customer_name = re.sub(r'\s*（お問い合わせ）$', '', customer_name)
 
     order_match = re.search(r'#(\d+)', thread.name)
     order_id = order_match.group(1) if order_match else None
@@ -1337,12 +1339,13 @@ class ReplyTargetSelect(discord.ui.Select):
 
 class TemplateEditModal(discord.ui.Modal):
     """テンプレート編集モーダル（複数ユーザー対応 / Instagram対応）"""
-    def __init__(self, template, customer_name, order_id, line_user_ids, platform='line'):
+    def __init__(self, template, customer_name, order_id, line_user_ids, platform='line', inquiry_id=None):
         self.template = template
         self.customer_name = customer_name
         self.order_id = order_id
+        self.inquiry_id = inquiry_id
         self.line_user_ids = line_user_ids  # [{'line_user_id': ..., 'display_name': ...}]
-        self.platform = platform  # 'line', 'instagram', or 'atelier'
+        self.platform = platform  # 'line', 'instagram', 'atelier', or 'atelier_inquiry'
 
         title = template["label"]
         if template.get("status_action"):
@@ -1372,20 +1375,25 @@ class TemplateEditModal(discord.ui.Modal):
         # 1. メッセージ送信（プラットフォーム別）
         all_success = True
         sent_names = []
-        platform_labels = {'line': 'LINE', 'instagram': 'Instagram', 'atelier': 'アトリエ'}
+        platform_labels = {'line': 'LINE', 'instagram': 'Instagram', 'atelier': 'アトリエ', 'atelier_inquiry': 'アトリエ'}
         platform_label = platform_labels.get(self.platform, self.platform)
 
-        if self.platform == 'atelier':
+        if self.platform in ('atelier', 'atelier_inquiry'):
             # アトリエ: WordPress webhook で送信
-            webhook_url = get_atelier_webhook_url()
             secret = get_atelier_webhook_secret()
-            if webhook_url and secret and self.order_id:
+            if self.platform == 'atelier_inquiry' and self.inquiry_id:
+                webhook_url = get_atelier_inquiry_webhook_url()
+                payload = {"inquiry_id": int(self.inquiry_id), "message": message_text, "image_url": ""}
+            elif self.order_id:
+                webhook_url = get_atelier_webhook_url()
+                payload = {"order_id": int(self.order_id), "message": message_text, "image_url": ""}
+            else:
+                webhook_url = None
+                payload = None
+
+            if webhook_url and secret and payload:
                 try:
-                    resp = requests.post(webhook_url, json={
-                        "order_id": int(self.order_id),
-                        "message": message_text,
-                        "image_url": "",
-                    }, headers={
+                    resp = requests.post(webhook_url, json=payload, headers={
                         "X-Atelier-Secret": secret,
                         "Content-Type": "application/json",
                     }, timeout=10)
@@ -1413,7 +1421,7 @@ class TemplateEditModal(discord.ui.Modal):
                 else:
                     all_success = False
 
-        if not sent_names and not (self.platform == 'atelier' and all_success):
+        if not sent_names and not (self.platform in ('atelier', 'atelier_inquiry') and all_success):
             await interaction.followup.send(f"❌ {platform_label}送信に失敗しました", ephemeral=True)
             return
 
@@ -1504,7 +1512,7 @@ class TemplateEditModal(discord.ui.Modal):
             color=0x06C755
         )
         sent_embed.set_author(name=f"📤 {self.template['label']}")
-        footer_platforms = {'line': 'LINE送信済み', 'instagram': 'Instagram送信済み', 'atelier': 'アトリエ送信済み'}
+        footer_platforms = {'line': 'LINE送信済み', 'instagram': 'Instagram送信済み', 'atelier': 'アトリエ送信済み', 'atelier_inquiry': 'アトリエ送信済み'}
         footer_platform = footer_platforms.get(self.platform, f'{self.platform}送信済み')
         if len(self.line_user_ids) > 1:
             names = ", ".join(u['display_name'] for u in self.line_user_ids)
@@ -1544,9 +1552,24 @@ class TemplatePersistentView(discord.ui.View):
         # プラットフォーム判定
         is_atelier = get_forum_atelier() and str(thread.parent_id) == str(get_forum_atelier())
 
+        inquiry_id = None
         if is_atelier:
-            # アトリエスレッド
-            platform = 'atelier'
+            # アトリエスレッド（注文 or 問い合わせ）
+            is_inquiry_thread = thread.name.startswith("💬")
+            if is_inquiry_thread:
+                platform = 'atelier_inquiry'
+                # 初回embedからinquiry_idを取得
+                async for hist_msg in thread.history(limit=5, oldest_first=True):
+                    for embed in hist_msg.embeds:
+                        if embed.title and "お問い合わせ #" in embed.title:
+                            match = re.search(r'#(\d+)', embed.title)
+                            if match:
+                                inquiry_id = int(match.group(1))
+                                break
+                    if inquiry_id:
+                        break
+            else:
+                platform = 'atelier'
             customer_name, order_id = get_thread_customer_info(thread)
             all_users = [{'line_user_id': '', 'display_name': customer_name}]
         elif get_platform_from_thread(thread.id) == 'instagram':
@@ -1580,7 +1603,7 @@ class TemplatePersistentView(discord.ui.View):
                 order_id = str(customer["orders"][-1].get("order_id", ""))
 
         # モーダル表示（プラットフォーム情報付き）
-        modal = TemplateEditModal(template, customer_name, order_id, all_users, platform=platform)
+        modal = TemplateEditModal(template, customer_name, order_id, all_users, platform=platform, inquiry_id=inquiry_id)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="① あいさつ", style=discord.ButtonStyle.secondary, custom_id="tpl_greeting", emoji="👋", row=0)
