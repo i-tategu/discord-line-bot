@@ -373,8 +373,12 @@ def save_templates(templates):
 
 def get_thread_customer_info(thread):
     """フォーラムスレッドから顧客情報を取得"""
+    # 絵文字付きパターン: 🟡 #1874 金澤 あかね 様
     name_match = re.search(r'[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F\U0001F4AC\U0001F3A8]\s*(?:#\d+\s+)?(.+?)\s*様', thread.name)
-    customer_name = name_match.group(1) if name_match else "お客様"
+    if not name_match:
+        # 絵文字なしパターン: #1860 中里 文音 様 / 中里 文音 様
+        name_match = re.search(r'(?:#\d+\s+)?([^\d#].+?)\s*様', thread.name)
+    customer_name = name_match.group(1).strip() if name_match else "お客様"
 
     order_match = re.search(r'#(\d+)', thread.name)
     order_id = order_match.group(1) if order_match else None
