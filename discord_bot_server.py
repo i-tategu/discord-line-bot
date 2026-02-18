@@ -378,7 +378,7 @@ async def create_status_embed():
 
         if data['customers']:
             customer_links = []
-            for c in data['customers'][:10]:
+            for c in data['customers']:
                 channel_id = c.get('discord_channel_id')
                 name = c.get('display_name', '不明')
                 # 注文番号を取得
@@ -391,10 +391,22 @@ async def create_status_embed():
                 else:
                     customer_links.append(f"• {order_num}{name}様")
 
-            embed.description = "\n".join(customer_links)
-
-            if len(data['customers']) > 10:
-                embed.description += f"\n... 他 {len(data['customers']) - 10}件"
+            # Embed文字数制限(4096)対策: 超える場合は複数Embedに分割
+            chunk = []
+            chunk_len = 0
+            for line in customer_links:
+                if chunk_len + len(line) + 1 > 4000 and chunk:
+                    embed.description = "\n".join(chunk)
+                    embeds.append(embed)
+                    embed = discord.Embed(
+                        title=f"{config['emoji']} {config['label']} (続き)",
+                        color=config['color']
+                    )
+                    chunk = []
+                    chunk_len = 0
+                chunk.append(line)
+                chunk_len += len(line) + 1
+            embed.description = "\n".join(chunk) if chunk else "_該当なし_"
         else:
             embed.description = "_該当なし_"
 
