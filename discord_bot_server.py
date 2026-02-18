@@ -308,13 +308,46 @@ _posting_buttons_lock = set()  # 再投稿ループ防止
 
 
 def load_templates():
-    """LINEテンプレートを読み込み（DATA_DIR優先）"""
-    path = _TEMPLATES_SAVED if os.path.exists(_TEMPLATES_SAVED) else _TEMPLATES_BUNDLED
-    if os.path.exists(path):
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            return data.get("templates", [])
-    return []
+    """LINEテンプレートを読み込み（DATA_DIR優先、バンドル版の新規テンプレートを自動マージ）"""
+    saved_templates = []
+    bundled_templates = []
+
+    if os.path.exists(_TEMPLATES_SAVED):
+        with open(_TEMPLATES_SAVED, 'r', encoding='utf-8') as f:
+            saved_templates = json.load(f).get("templates", [])
+
+    if os.path.exists(_TEMPLATES_BUNDLED) and _TEMPLATES_BUNDLED != _TEMPLATES_SAVED:
+        with open(_TEMPLATES_BUNDLED, 'r', encoding='utf-8') as f:
+            bundled_templates = json.load(f).get("templates", [])
+
+    if not saved_templates:
+        return bundled_templates
+
+    # バンドル版にあって保存版にないテンプレートを自動追加
+    saved_ids = {t["id"] for t in saved_templates}
+    new_templates = [t for t in bundled_templates if t["id"] not in saved_ids]
+    if new_templates:
+        # バンドル版の順序に従って挿入
+        bundled_order = {t["id"]: i for i, t in enumerate(bundled_templates)}
+        merged = list(saved_templates)
+        for nt in new_templates:
+            target_pos = bundled_order.get(nt["id"], len(merged))
+            # 適切な位置に挿入
+            insert_at = 0
+            for i, t in enumerate(merged):
+                if bundled_order.get(t["id"], 0) < target_pos:
+                    insert_at = i + 1
+            merged.insert(insert_at, nt)
+        # ラベル番号を振り直し
+        for i, t in enumerate(merged):
+            nums = "①②③④⑤⑥⑦⑧⑨⑩"
+            old_label = t["label"]
+            # 既存の番号を除去して振り直し
+            t["label"] = re.sub(r'^[①-⑩]\s*', f'{nums[i]} ', old_label)
+        save_templates(merged)
+        return merged
+
+    return saved_templates
 
 
 def save_templates(templates):
