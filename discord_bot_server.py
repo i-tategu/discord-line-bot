@@ -1873,7 +1873,12 @@ def woo_webhook():
     order_status = data.get("status", "")
     print(f"[Webhook] Received order #{order_id} (status: {order_status}) from {webhook_source}")
 
-    # 顧客一覧に追加（全ステータスで追加、重複は自動スキップ）
+    # 顧客一覧に追加（入金確認済みのみ）
+    if order_status in ("pending", "failed", "cancelled"):
+        print(f"[Webhook] Skipping customer add: status={order_status}")
+        # pending等はCanva処理もスキップ
+        return jsonify({"status": "skipped", "reason": f"order status: {order_status}"})
+
     try:
         billing = data.get("billing", {})
         customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}".strip()
