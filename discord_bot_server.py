@@ -704,20 +704,25 @@ async def on_ready():
 
 async def handle_atelier_message(message):
     """#atelier フォーラムのメッセージをWordPress webhook に転送"""
-    # スレッド名から注文番号を取得（例: "🎨 #1865 はるか 様"）
+    # スレッド名からIDを取得（例: "🟡 #1865 はるか 様" or "💬 #1 石橋伯昂 様"）
     thread_name = message.channel.name
-    order_match = re.search(r'#(\d+)', thread_name)
-    if not order_match:
-        print(f"[Atelier] Could not extract order ID from thread: {thread_name}")
+    id_match = re.search(r'#(\d+)', thread_name)
+    if not id_match:
+        print(f"[Atelier] Could not extract ID from thread: {thread_name}")
         return
 
-    order_id = order_match.group(1)
+    target_id = id_match.group(1)
+    is_inquiry = thread_name.startswith('💬')
     webhook_url = get_atelier_webhook_url()
     secret = get_atelier_webhook_secret()
 
     if not webhook_url or not secret:
         print("[Atelier] Webhook URL or secret not configured")
         return
+
+    # 問い合わせは別エンドポイント
+    if is_inquiry:
+        webhook_url = webhook_url.replace('/atelier/webhook', '/atelier/inquiry/webhook')
 
     # テキストメッセージ
     text = message.content if message.content and not message.content.startswith("!") else ""
@@ -733,11 +738,14 @@ async def handle_atelier_message(message):
         return
 
     payload = {
-        "order_id": int(order_id),
         "message": text,
         "image_url": image_url,
         "discord_message_id": str(message.id),
     }
+    if is_inquiry:
+        payload["inquiry_id"] = int(target_id)
+    else:
+        payload["order_id"] = int(target_id)
 
     try:
         resp = requests.post(webhook_url, json=payload, headers={
@@ -745,9 +753,10 @@ async def handle_atelier_message(message):
             "Content-Type": "application/json",
         }, timeout=10)
 
+        label = f"inquiry={target_id}" if is_inquiry else f"order={target_id}"
         if resp.status_code == 200:
             await message.add_reaction("✅")
-            print(f"[Atelier] Forwarded to WP: order={order_id}")
+            print(f"[Atelier] Forwarded to WP: {label}")
         else:
             await message.add_reaction("❌")
             print(f"[Atelier] WP webhook failed: {resp.status_code} {resp.text}")
@@ -788,11 +797,12 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if emoji not in ('👀', '✨'):
         return
 
-    order_match = re.search(r'#(\d+)', channel.name)
-    if not order_match:
+    id_match = re.search(r'#(\d+)', channel.name)
+    if not id_match:
         return
 
-    order_id = order_match.group(1)
+    target_id = id_match.group(1)
+    is_inquiry = channel.name.startswith('💬')
     webhook_url = get_atelier_webhook_url()
     secret = get_atelier_webhook_secret()
     if not webhook_url or not secret:
@@ -802,29 +812,35 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         if emoji == '✨':
             # 既読 + ✨リアクションをアトリエに送信
             base_url = webhook_url.rsplit('/webhook', 1)[0]
-            resp = requests.post(f"{base_url}/reaction", json={
-                "order_id": int(order_id),
+            reaction_payload = {
                 "discord_message_id": str(payload.message_id),
                 "emoji": "✨",
-            }, headers={
+            }
+            if is_inquiry:
+                reaction_payload["inquiry_id"] = int(target_id)
+            else:
+                reaction_payload["order_id"] = int(target_id)
+            resp = requests.post(f"{base_url}/reaction", json=reaction_payload, headers={
                 "X-Atelier-Secret": secret,
                 "Content-Type": "application/json",
             }, timeout=10)
             if resp.status_code == 200:
-                print(f"[Atelier Reaction] ✨ sent for order={order_id}")
+                print(f"[Atelier Reaction] ✨ sent for {'inquiry' if is_inquiry else 'order'}={target_id}")
             else:
                 print(f"[Atelier Reaction] Failed: {resp.status_code} {resp.text}")
         elif emoji == '👀':
             # 既読のみ
-            resp = requests.post(webhook_url, json={
-                "order_id": int(order_id),
-                "mark_read": True,
-            }, headers={
+            mark_read_payload = {"mark_read": True}
+            if is_inquiry:
+                mark_read_payload["inquiry_id"] = int(target_id)
+            else:
+                mark_read_payload["order_id"] = int(target_id)
+            resp = requests.post(webhook_url, json=mark_read_payload, headers={
                 "X-Atelier-Secret": secret,
                 "Content-Type": "application/json",
             }, timeout=10)
             if resp.status_code == 200:
-                print(f"[Atelier Reaction] 👀 mark-read for order={order_id}")
+                print(f"[Atelier Reaction] 👀 mark-read for {'inquiry' if is_inquiry else 'order'}={target_id}")
             else:
                 print(f"[Atelier Reaction] Failed: {resp.status_code} {resp.text}")
     except Exception as e:
