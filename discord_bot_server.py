@@ -323,29 +323,44 @@ def load_templates():
     if not saved_templates:
         return bundled_templates
 
-    # バンドル版にあって保存版にないテンプレートを自動追加
+    # バンドル版との差分を同期
+    bundled_map = {t["id"]: t for t in bundled_templates}
     saved_ids = {t["id"] for t in saved_templates}
     new_templates = [t for t in bundled_templates if t["id"] not in saved_ids]
+
+    changed = False
+
+    # 既存テンプレートのテキスト・ラベル・絵文字をバンドル版で同期
+    for st in saved_templates:
+        bt = bundled_map.get(st["id"])
+        if bt and st["text"] != bt["text"]:
+            st["text"] = bt["text"]
+            changed = True
+        if bt and st.get("emoji") != bt.get("emoji"):
+            st["emoji"] = bt.get("emoji")
+            changed = True
+
+    # 新規テンプレートを追加
     if new_templates:
-        # バンドル版の順序に従って挿入
         bundled_order = {t["id"]: i for i, t in enumerate(bundled_templates)}
         merged = list(saved_templates)
         for nt in new_templates:
             target_pos = bundled_order.get(nt["id"], len(merged))
-            # 適切な位置に挿入
             insert_at = 0
             for i, t in enumerate(merged):
                 if bundled_order.get(t["id"], 0) < target_pos:
                     insert_at = i + 1
             merged.insert(insert_at, nt)
+        saved_templates = merged
+        changed = True
+
+    if changed:
         # ラベル番号を振り直し
-        for i, t in enumerate(merged):
-            nums = "①②③④⑤⑥⑦⑧⑨⑩"
-            old_label = t["label"]
-            # 既存の番号を除去して振り直し
-            t["label"] = re.sub(r'^[①-⑩]\s*', f'{nums[i]} ', old_label)
-        save_templates(merged)
-        return merged
+        nums = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+        for i, t in enumerate(saved_templates):
+            num = nums[i] if i < len(nums) else f"({i+1})"
+            t["label"] = re.sub(r'^[①-⑳(]\S*\s*', f'{num} ', t["label"])
+        save_templates(saved_templates)
 
     return saved_templates
 
