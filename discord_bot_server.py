@@ -1621,9 +1621,73 @@ class TemplateEditModal(discord.ui.Modal):
 
 
 class TemplatePersistentView(discord.ui.View):
-    """テンプレートボタン常設ビュー（Bot再起動後も動作）"""
+    """テンプレートボタン常設ビュー（JSONから動的生成、Bot再起動後も動作）"""
+
+    # ステータスアクション付きテンプレート用のボタンスタイルマッピング
+    _STATUS_STYLES = {
+        'design-confirmed': discord.ButtonStyle.primary,
+        'produced': discord.ButtonStyle.primary,
+        'shipped': discord.ButtonStyle.success,
+    }
+
     def __init__(self):
         super().__init__(timeout=None)
+        templates = load_templates()
+        nums = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+
+        # テンプレートボタンを動的に追加（最大4行×5個=20個）
+        for i, tpl in enumerate(templates[:20]):
+            num = nums[i] if i < len(nums) else f"({i+1})"
+            style = self._STATUS_STYLES.get(tpl.get("status_action"), discord.ButtonStyle.secondary)
+            row = i // 5  # 5個ごとに次の行
+            if row > 3:
+                row = 3  # 最大row=3（row=4はテンプレ編集用）
+
+            btn = discord.ui.Button(
+                label=f"{num} {tpl['label'].lstrip('①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳ ')}",
+                style=style,
+                custom_id=f"tpl_{tpl['id']}",
+                emoji=tpl.get("emoji"),
+                row=row,
+            )
+            btn.callback = self._make_callback(tpl["id"])
+            self.add_item(btn)
+
+        # テンプレ編集ボタン（最後の行）
+        manage_btn = discord.ui.Button(
+            label="テンプレ編集",
+            style=discord.ButtonStyle.secondary,
+            custom_id="tpl_manage",
+            emoji="✏️",
+            row=4,
+        )
+        manage_btn.callback = self._manage_callback
+        self.add_item(manage_btn)
+
+    def _make_callback(self, template_id: str):
+        async def callback(interaction: discord.Interaction):
+            await self._handle_button(interaction, template_id)
+        return callback
+
+    async def _manage_callback(self, interaction: discord.Interaction):
+        """テンプレート管理メニュー"""
+        templates = load_templates()
+        options = []
+        for t in templates:
+            options.append(discord.SelectOption(
+                label=f"{t['emoji']} {t['label']}",
+                value=t["id"],
+                description="編集"
+            ))
+        options.append(discord.SelectOption(
+            label="＋ 新規テンプレート追加",
+            value="__new__",
+            emoji="➕"
+        ))
+        view = discord.ui.View(timeout=120)
+        select = TemplateManageSelect(options)
+        view.add_item(select)
+        await interaction.response.send_message("編集するテンプレートを選択:", view=view, ephemeral=True)
 
     async def _handle_button(self, interaction: discord.Interaction, template_id: str):
         """ボタン押下時の共通処理（複数ユーザー対応 / Instagram対応）"""
@@ -1688,60 +1752,6 @@ class TemplatePersistentView(discord.ui.View):
         inq_id = locals().get('inquiry_id')
         modal = TemplateEditModal(template, customer_name, order_id, all_users, platform=platform, inquiry_id=inq_id)
         await interaction.response.send_modal(modal)
-
-    @discord.ui.button(label="① あいさつ", style=discord.ButtonStyle.secondary, custom_id="tpl_greeting", emoji="👋", row=0)
-    async def btn_greeting(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_button(interaction, "greeting")
-
-    @discord.ui.button(label="② ページ案内", style=discord.ButtonStyle.secondary, custom_id="tpl_atelier_intro", emoji="🔗", row=0)
-    async def btn_atelier_intro(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_button(interaction, "atelier_intro")
-
-    @discord.ui.button(label="③ デザイン確認", style=discord.ButtonStyle.secondary, custom_id="tpl_design_check", emoji="🎨", row=0)
-    async def btn_design_check(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_button(interaction, "design_check")
-
-    @discord.ui.button(label="④ 確定", style=discord.ButtonStyle.primary, custom_id="tpl_design_confirmed", emoji="✅", row=0)
-    async def btn_design_confirmed(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_button(interaction, "design_confirmed")
-
-    @discord.ui.button(label="⑤ 制作完了", style=discord.ButtonStyle.primary, custom_id="tpl_production_done", emoji="🎉", row=1)
-    async def btn_production_done(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_button(interaction, "production_done")
-
-    @discord.ui.button(label="⑥ 発送完了", style=discord.ButtonStyle.success, custom_id="tpl_shipped", emoji="📦", row=1)
-    async def btn_shipped(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_button(interaction, "shipped")
-
-    @discord.ui.button(label="⑦ お礼①", style=discord.ButtonStyle.secondary, custom_id="tpl_thanks_1", emoji="🙏", row=1)
-    async def btn_thanks_1(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_button(interaction, "thanks_1")
-
-    @discord.ui.button(label="⑧ お礼②", style=discord.ButtonStyle.secondary, custom_id="tpl_thanks_2", emoji="💐", row=1)
-    async def btn_thanks_2(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_button(interaction, "thanks_2")
-
-    @discord.ui.button(label="テンプレ編集", style=discord.ButtonStyle.secondary, custom_id="tpl_manage", emoji="✏️", row=2)
-    async def btn_manage(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """テンプレート管理メニュー"""
-        templates = load_templates()
-        options = []
-        for t in templates:
-            options.append(discord.SelectOption(
-                label=f"{t['emoji']} {t['label']}",
-                value=t["id"],
-                description="編集"
-            ))
-        options.append(discord.SelectOption(
-            label="＋ 新規テンプレート追加",
-            value="__new__",
-            emoji="➕"
-        ))
-
-        view = discord.ui.View(timeout=120)
-        select = TemplateManageSelect(options)
-        view.add_item(select)
-        await interaction.response.send_message("編集するテンプレートを選択:", view=view, ephemeral=True)
 
 
 class TemplateManageSelect(discord.ui.Select):
@@ -1811,7 +1821,7 @@ class TemplateManageModal(discord.ui.Modal):
             })
             save_templates(templates)
             await interaction.response.send_message(
-                f"✅ テンプレート「{self.label_input.value}」を追加しました",
+                f"✅ テンプレート「{self.label_input.value}」を追加しました\nボタンを更新しています...",
                 ephemeral=True
             )
         else:
@@ -1825,6 +1835,12 @@ class TemplateManageModal(discord.ui.Modal):
                 f"✅ テンプレート「{self.label_input.value}」を更新しました",
                 ephemeral=True
             )
+
+        # 新規追加時はボタンを再投稿して反映
+        if self.is_new:
+            thread = interaction.channel
+            if isinstance(thread, discord.Thread):
+                await post_template_buttons(thread)
 
 
 async def post_template_buttons(thread):
