@@ -848,6 +848,96 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
 
 
 @bot.event
+async def on_thread_update(before: discord.Thread, after: discord.Thread):
+    """フォーラムタグ変更 → DB ステータス同期"""
+    forum_atelier = get_forum_atelier()
+    if not forum_atelier or str(after.parent_id) != str(forum_atelier):
+        return
+
+    # タグが変わっていなければ無視
+    before_tags = {t.id for t in before.applied_tags}
+    after_tags = {t.id for t in after.applied_tags}
+    if before_tags == after_tags:
+        return
+
+    # タグ名からステータスを特定
+    TAG_STATUS_MAP = {
+        "購入済み": "purchased",
+        "デザイン確定": "design-confirmed",
+        "制作完了": "produced",
+        "発送済み": "shipped",
+    }
+    new_status = None
+    for tag in after.applied_tags:
+        for label, status_val in TAG_STATUS_MAP.items():
+            if label in tag.name:
+                new_status = status_val
+                break
+        if new_status:
+            break
+
+    if not new_status:
+        return
+
+    # スレッド名からIDとタイプを取得
+    id_match = re.search(r'#(\d+)', after.name)
+    if not id_match:
+        return
+    target_id = int(id_match.group(1))
+    is_inquiry = after.name.startswith('💬')
+
+    # スレッド名の絵文字も更新
+    try:
+        status_enum = CustomerStatus(new_status)
+        config = STATUS_CONFIG[status_enum]
+        new_name = re.sub(r'^[^\s#]+\s*', f"{config['emoji']} ", after.name)
+        if new_name != after.name:
+            await after.edit(name=new_name)
+    except (ValueError, Exception) as e:
+        print(f"[Thread Update] Name update failed: {e}")
+
+    # DB 同期
+    wc_url = get_wc_url()
+    secret = get_atelier_webhook_secret()
+    if not wc_url or not secret:
+        return
+
+    try:
+        if is_inquiry:
+            resp = requests.post(
+                f"{wc_url}/wp-json/i-tategu/v1/atelier/inquiry/status",
+                json={"inquiry_id": target_id, "status": new_status},
+                headers={"X-Atelier-Secret": secret},
+                timeout=10,
+            )
+        else:
+            # WooCommerce 注文ステータス更新
+            wc_status_map = {
+                "purchased": "designing",
+                "design-confirmed": "design-confirmed",
+                "produced": "produced",
+                "shipped": "shipped",
+            }
+            wc_status = wc_status_map.get(new_status, new_status)
+            wc_key = os.environ.get("WC_CONSUMER_KEY", "")
+            wc_secret = os.environ.get("WC_CONSUMER_SECRET", "")
+            resp = requests.put(
+                f"{wc_url}/wp-json/wc/v3/orders/{target_id}",
+                json={"status": wc_status},
+                auth=(wc_key, wc_secret),
+                timeout=10,
+            )
+
+        label = f"{'inquiry' if is_inquiry else 'order'}={target_id}"
+        if resp.status_code == 200:
+            print(f"[Thread Tag Sync] ✅ {label} → {new_status}")
+        else:
+            print(f"[Thread Tag Sync] ❌ {label}: {resp.status_code} {resp.text[:100]}")
+    except Exception as e:
+        print(f"[Thread Tag Sync] Error: {e}")
+
+
+@bot.event
 async def on_message(message):
     """Discordメッセージを監視 + テンプレートボタン再投稿"""
     print(f"[MSG] channel={message.channel.name if hasattr(message.channel, 'name') else 'DM'}, author={message.author}, bot={message.author.bot}")
