@@ -138,12 +138,12 @@ FONT_MAP = {
     'Reggae One': 'Reggae One',
 }
 
-# フォント表示名マッピング（シミュレーターと同じスタイル表記、英語版）
+# フォント表示名マッピング（実際のGoogle Fontsフォント名）
 FONT_DISPLAY_MAP = {
-    'Sacramento': 'Holiday style',
-    'Pinyon Script': 'Eyesome style',
-    'Satisfy': 'Mistrully style',
-    'Rouge Script': 'Amsterdam style',
+    'Sacramento': 'Sacramento',
+    'Pinyon Script': 'Pinyon Script',
+    'Satisfy': 'Satisfy',
+    'Rouge Script': 'Rouge Script',
 }
 
 # テンプレート
