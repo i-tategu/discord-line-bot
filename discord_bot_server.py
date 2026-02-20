@@ -936,6 +936,19 @@ async def on_thread_update(before: discord.Thread, after: discord.Thread):
     except Exception as e:
         print(f"[Thread Tag Sync] Error: {e}")
 
+    # customers.json のステータスも連動更新
+    if not is_inquiry:
+        try:
+            status_enum = CustomerStatus(new_status)
+            linked = update_linked_customer_statuses(target_id, status_enum)
+            if linked:
+                print(f"[Thread Tag Sync] Updated customers.json: order #{target_id} → {new_status} ({len(linked)} customers)")
+        except Exception as e:
+            print(f"[Thread Tag Sync] customers.json update failed: {e}")
+
+    # 顧客一覧を更新
+    await update_overview_channel()
+
 
 @bot.event
 async def on_message(message):
