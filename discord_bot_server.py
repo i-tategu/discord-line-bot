@@ -1753,12 +1753,11 @@ class TemplateEditModal(discord.ui.Modal):
                 except Exception as e:
                     results.append(f"⚠️ WooCommerceエラー: {e}")
 
-        # 3. customer_managerステータス更新（全ユーザー）
-        if status_action:
+        # 3. customer_managerステータス更新（注文IDで全連動顧客を更新）
+        if status_action and self.order_id:
             try:
                 new_status = CustomerStatus(status_action)
-                for user in self.line_user_ids:
-                    update_customer_status(user['line_user_id'], new_status, self.order_id)
+                update_linked_customer_statuses(self.order_id, new_status)
                 results.append("✅ 顧客ステータス更新")
             except ValueError:
                 pass
