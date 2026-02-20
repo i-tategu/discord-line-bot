@@ -305,12 +305,28 @@ _posting_buttons_lock = set()  # 再投稿ループ防止
 
 
 def load_templates():
-    """LINEテンプレートを読み込み（DATA_DIR優先）"""
-    path = _TEMPLATES_SAVED if os.path.exists(_TEMPLATES_SAVED) else _TEMPLATES_BUNDLED
-    if os.path.exists(path):
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            return data.get("templates", [])
+    """LINEテンプレートを読み込み（バンドル版のversionが上なら自動更新）"""
+    # バンドル版のバージョンを取得
+    bundled_ver = 0
+    if os.path.exists(_TEMPLATES_BUNDLED):
+        with open(_TEMPLATES_BUNDLED, 'r', encoding='utf-8') as f:
+            bundled_data = json.load(f)
+            bundled_ver = bundled_data.get("version", 0)
+
+    # 保存版のバージョンを取得し、古ければバンドル版で上書き
+    if os.path.exists(_TEMPLATES_SAVED):
+        with open(_TEMPLATES_SAVED, 'r', encoding='utf-8') as f:
+            saved_data = json.load(f)
+            saved_ver = saved_data.get("version", 0)
+        if bundled_ver > saved_ver:
+            import shutil
+            shutil.copy2(_TEMPLATES_BUNDLED, _TEMPLATES_SAVED)
+            return bundled_data.get("templates", [])
+        return saved_data.get("templates", [])
+
+    # 保存版がなければバンドル版を使用
+    if os.path.exists(_TEMPLATES_BUNDLED):
+        return bundled_data.get("templates", [])
     return []
 
 
