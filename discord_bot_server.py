@@ -304,36 +304,50 @@ _template_button_msg_ids = {}
 _posting_buttons_lock = set()  # 再投稿ループ防止
 
 
-def load_templates():
-    """LINEテンプレートを読み込み（バンドル版のversionが上なら自動更新）"""
-    # バンドル版のバージョンを取得
-    bundled_ver = 0
+def _get_bundled_version():
+    """バンドル版のバージョンとテンプレートを取得"""
     if os.path.exists(_TEMPLATES_BUNDLED):
         with open(_TEMPLATES_BUNDLED, 'r', encoding='utf-8') as f:
-            bundled_data = json.load(f)
-            bundled_ver = bundled_data.get("version", 0)
+            data = json.load(f)
+            return data.get("version", 0), data.get("templates", [])
+    return 0, []
 
-    # 保存版のバージョンを取得し、古ければバンドル版で上書き
+
+def load_templates():
+    """LINEテンプレートを読み込み（バンドル版更新時はマージして保持）"""
+    bundled_ver, bundled_templates = _get_bundled_version()
+    bundled_ids = {t["id"] for t in bundled_templates}
+
     if os.path.exists(_TEMPLATES_SAVED):
         with open(_TEMPLATES_SAVED, 'r', encoding='utf-8') as f:
             saved_data = json.load(f)
             saved_ver = saved_data.get("version", 0)
+            saved_templates = saved_data.get("templates", [])
+
         if bundled_ver > saved_ver:
-            import shutil
-            shutil.copy2(_TEMPLATES_BUNDLED, _TEMPLATES_SAVED)
-            return bundled_data.get("templates", [])
-        return saved_data.get("templates", [])
+            # バンドル版の1〜7を更新しつつ、カスタム追加分(8,9等)は保持
+            custom_templates = [t for t in saved_templates if t["id"] not in bundled_ids]
+            merged = bundled_templates + custom_templates
+            save_templates(merged, bundled_ver)
+            return merged
+        return saved_templates
 
     # 保存版がなければバンドル版を使用
-    if os.path.exists(_TEMPLATES_BUNDLED):
-        return bundled_data.get("templates", [])
-    return []
+    return bundled_templates
 
 
-def save_templates(templates):
-    """テンプレートをDATA_DIRに保存"""
+def save_templates(templates, version=None):
+    """テンプレートをDATA_DIRに保存（versionも保持）"""
+    # 既存のバージョンを維持
+    if version is None:
+        if os.path.exists(_TEMPLATES_SAVED):
+            with open(_TEMPLATES_SAVED, 'r', encoding='utf-8') as f:
+                existing = json.load(f)
+                version = existing.get("version", 0)
+        else:
+            version, _ = _get_bundled_version()
     with open(_TEMPLATES_SAVED, 'w', encoding='utf-8') as f:
-        json.dump({"templates": templates}, f, ensure_ascii=False, indent=2)
+        json.dump({"version": version, "templates": templates}, f, ensure_ascii=False, indent=2)
 
 
 def get_thread_customer_info(thread):
