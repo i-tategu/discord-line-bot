@@ -1766,14 +1766,48 @@ def send_discord_notification(order_data, design, bot_token, order=None):
         }
         date_format = date_format_labels.get(date_format, date_format)
 
+    # 金額内訳を構築
+    price_value = "N/A"
+    if order_total:
+        fee_lines = order.get('fee_lines', []) if order else []
+        option_lines = []
+        discount_lines = []
+        for fee in fee_lines:
+            fee_amount = int(float(fee.get('total', '0')))
+            fee_name = fee.get('name', '')
+            if fee_amount > 0:
+                option_lines.append(f"  {fee_name}: ¥{fee_amount:,}")
+            elif fee_amount < 0:
+                discount_lines.append(f"  {fee_name}: ¥{fee_amount:,}")
+
+        base_price = int(float(order_total)) - sum(int(float(f.get('total', '0'))) for f in fee_lines)
+        lines = [f"本体: ¥{base_price:,}"]
+
+        if option_lines:
+            lines.append("📌 オプション")
+            lines.extend(option_lines)
+        else:
+            lines.append("📌 オプション: なし")
+
+        for d in discount_lines:
+            lines.append(f"🏷️{d.strip()}")
+
+        if option_lines or discount_lines:
+            lines.append("───────────")
+            lines.append(f"**合計: ¥{int(float(order_total)):,}**")
+        else:
+            lines.append(f"**合計: ¥{int(float(order_total)):,}**")
+
+        price_value = "\n".join(lines)
+
     embed = {
         "title": f"🛒 新規注文 #{order_data['order_id']}",
         "color": 0x06C755,
         "fields": [
             {"name": "👤 お客様", "value": customer_name or f"{groom} & {bride}", "inline": True},
-            {"name": "💰 金額", "value": f"¥{int(float(order_total)):,}" if order_total else "N/A", "inline": True},
             {"name": "💳 支払方法", "value": payment_method or "N/A", "inline": True},
             {"name": "📦 商品", "value": f"{order_data['board_name']} No.{order_data['board_number']}", "inline": False},
+            {"name": "💰 金額", "value": price_value, "inline": False},
             {"name": "📅 挙式日", "value": f"{order_data['wedding_date']}（{date_format}）" if date_format else order_data['wedding_date'], "inline": False},
             {"name": "📞 連絡先", "value": f"TEL: {customer_phone}\nEmail: {customer_email}" if customer_phone else "N/A", "inline": False},
         ],
