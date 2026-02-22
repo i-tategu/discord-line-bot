@@ -2086,6 +2086,36 @@ async def post_template_buttons(thread):
         _posting_buttons_lock.discard(thread_key)
 
 
+@bot.tree.command(name="template-cleanup", description="全スレッドのテンプレートボタンを一括削除")
+async def template_cleanup(interaction: discord.Interaction):
+    """全スレッドからテンプレートボタンメッセージを一括削除"""
+    forum_id = get_forum_atelier()
+    if not forum_id:
+        await interaction.response.send_message("❌ フォーラムが設定されていません", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    forum = bot.get_channel(int(forum_id))
+    if not forum:
+        await interaction.followup.send("❌ フォーラムが見つかりません", ephemeral=True)
+        return
+
+    deleted_count = 0
+    thread_count = 0
+    for thread in forum.threads:
+        thread_count += 1
+        try:
+            async for msg in thread.history(limit=50):
+                if msg.author == bot.user and not msg.content and not msg.embeds and msg.components:
+                    await msg.delete()
+                    deleted_count += 1
+        except Exception:
+            pass
+
+    await interaction.followup.send(f"✅ {thread_count}スレッドから{deleted_count}件のテンプレートボタンを削除しました", ephemeral=True)
+
+
 @bot.tree.command(name="template", description="テンプレートボタンを表示")
 async def send_template(interaction: discord.Interaction):
     """テンプレートボタン投稿コマンド"""
