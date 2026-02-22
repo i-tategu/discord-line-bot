@@ -387,42 +387,13 @@ async def create_status_embed():
     """ステータス一覧のEmbed作成"""
     summary = get_status_summary()
 
-    # Push通知ステータスを一括取得
-    notify_data = {'orders': {}, 'inquiries': {}}
-    # メール開封ステータスを一括取得
-    email_track_data = {'orders': {}, 'inquiries': {}}
-    try:
-        wc_url = get_wc_url()
-        secret = get_atelier_webhook_secret()
-        if wc_url and secret:
-            resp = requests.get(
-                f"{wc_url}/wp-json/i-tategu/v1/atelier/notify-status",
-                headers={"X-Atelier-Secret": secret},
-                timeout=5
-            )
-            if resp.status_code == 200:
-                notify_data = resp.json()
-            resp2 = requests.get(
-                f"{wc_url}/wp-json/i-tategu/v1/atelier/email-track-status",
-                headers={"X-Atelier-Secret": secret},
-                timeout=5
-            )
-            if resp2.status_code == 200:
-                email_track_data = resp2.json()
-    except Exception as e:
-        print(f"[Overview] Notify/email status fetch failed: {e}")
-
-    notify_orders = {str(k): v for k, v in notify_data.get('orders', {}).items()}
-    email_track_orders = {str(k): v for k, v in email_track_data.get('orders', {}).items()}
-
     embeds = []
 
     header = discord.Embed(
         title="📊 顧客ステータス一覧",
-        description="各ステータスの顧客数と詳細\n🔔通知ON 📬メール開封 📩メール未開封 🔕未送信",
+        description="名前をクリックでチャンネルへジャンプ",
         color=0x5865F2
     )
-    header.set_footer(text="名前をクリックでチャンネルへジャンプ")
     embeds.append(header)
 
     for status in CustomerStatus:
@@ -439,26 +410,14 @@ async def create_status_embed():
             for c in data['customers']:
                 channel_id = c.get('discord_channel_id')
                 name = c.get('display_name', '不明')
-                # 注文番号を取得
                 order_num = ""
-                order_id_str = ""
                 if c.get('orders'):
                     latest_order = c['orders'][-1]
-                    order_id_str = str(latest_order.get('order_id', ''))
-                    order_num = f"#{order_id_str} "
-                # 通知・メール開封ステータス
-                if order_id_str in notify_orders:
-                    indicator = "🔔"
-                elif order_id_str in email_track_orders and email_track_orders[order_id_str].get('opened'):
-                    indicator = "📬"  # メール開封済み
-                elif order_id_str in email_track_orders:
-                    indicator = "📩"  # メール送信済み・未開封
-                else:
-                    indicator = "🔕"
+                    order_num = f"#{latest_order.get('order_id', '')} "
                 if channel_id:
-                    customer_links.append(f"• {indicator} {order_num}<#{channel_id}> {name}様")
+                    customer_links.append(f"• {config['emoji']} {order_num}<#{channel_id}> {name}様")
                 else:
-                    customer_links.append(f"• {indicator} {order_num}{name}様")
+                    customer_links.append(f"• {config['emoji']} {order_num}{name}様")
 
             # Embed文字数制限(4096)対策: 超える場合は複数Embedに分割
             chunk = []
