@@ -957,8 +957,7 @@ async def on_message(message):
                     if embed.author and embed.author.name and "📤" in embed.author.name:
                         is_sent_record = True
                         break
-                if not is_sent_record:
-                    await post_template_buttons(message.channel)
+                pass  # テンプレートボタン自動表示は無効化（/template で手動表示）
 
     if message.author == bot.user:
         return
@@ -1795,8 +1794,7 @@ class TemplateEditModal(discord.ui.Modal):
         # 8. 顧客一覧を更新
         await update_overview_channel()
 
-        # 9. テンプレートボタンを再投稿（常に下部に表示）
-        await post_template_buttons(thread)
+        # テンプレートボタン自動表示は無効化（/template で手動表示）
 
         # 結果報告
         await interaction.followup.send("\n".join(results), ephemeral=True)
