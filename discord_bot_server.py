@@ -1870,12 +1870,55 @@ async def _handle_template_button(interaction: discord.Interaction, template_id:
         await interaction.response.send_message("❌ アトリエフォーラムのスレッド内で使用してください", ephemeral=True)
         return
 
+    # オプション選択テンプレートの場合、選択メニューを表示
+    if template.get("option_select") and template.get("options"):
+        options = []
+        for i, opt in enumerate(template["options"]):
+            options.append(discord.SelectOption(
+                label=opt["label"],
+                value=str(i),
+            ))
+        view = discord.ui.View(timeout=120)
+        select = OptionPaymentSelect(options, template)
+        view.add_item(select)
+        await interaction.response.send_message("オプションを選択してください:", view=view, ephemeral=True)
+        return
+
     customer_name, order_id = get_thread_customer_info(thread)
     is_inquiry = thread.name.startswith('💬')
     all_users = [{'line_user_id': '', 'display_name': customer_name}]
 
     modal = TemplateEditModal(template, customer_name, order_id, all_users, is_inquiry=is_inquiry)
     await interaction.response.send_modal(modal)
+
+
+class OptionPaymentSelect(discord.ui.Select):
+    """オプション決済リンク選択メニュー"""
+    def __init__(self, options, template):
+        self.template_data = template
+        super().__init__(placeholder="オプションを選択...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_idx = int(self.values[0])
+        opt = self.template_data["options"][selected_idx]
+
+        # テンプレート文面にオプション情報を埋め込み
+        text = self.template_data["text"]
+        text = text.replace("{option_label}", opt["label"])
+        text = text.replace("{option_url}", opt["url"])
+
+        # 編集用モーダルで表示（送信前に確認・編集可能）
+        thread = interaction.channel
+        customer_name, order_id = get_thread_customer_info(thread)
+        is_inquiry = thread.name.startswith('💬')
+        all_users = [{'line_user_id': '', 'display_name': customer_name}]
+
+        # テンプレートのコピーを作成してテキストを置換済みのものに差し替え
+        template_copy = dict(self.template_data)
+        template_copy["text"] = text
+
+        modal = TemplateEditModal(template_copy, customer_name, order_id, all_users, is_inquiry=is_inquiry)
+        await interaction.response.send_modal(modal)
 
 
 async def _handle_manage_button(interaction: discord.Interaction):
