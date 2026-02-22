@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "templates": [
     {
       "id": "greeting",
@@ -36,6 +36,21 @@
         {"label": "白文字両面＋裏面加工（¥24,000）", "url": "https://buy.stripe.com/00wbJ01Qi5WA6R7fso3Je06"}
       ],
       "text": "ご確認ありがとうございます。\nデザイン確定で承りました。\n\nオプション加工の追加料金がございますので、\n下記リンクよりお支払いをお願いいたします。\n\n▼ {option_label}\n{option_url}\n\nお支払い確認後、制作に入らせていただきます。\n完成しましたらお写真にてご報告いたしますので、\n今しばらくお待ちください。"
+    },
+    {
+      "id": "option_link_only",
+      "label": "💳 オプション決済リンク",
+      "emoji": "🔗",
+      "status_action": null,
+      "option_select": true,
+      "options": [
+        {"label": "白文字片面（¥6,000）", "url": "https://buy.stripe.com/dRmaEW1QigBe6R72FC3Je05"},
+        {"label": "白文字両面（¥12,000）", "url": "https://buy.stripe.com/6oUcN4cuWckYejz1By3Je08"},
+        {"label": "裏面加工（¥12,000）", "url": "https://buy.stripe.com/eVqfZg7aC5WAfnDdkg3Je09"},
+        {"label": "白文字片面＋裏面加工（¥18,000）", "url": "https://buy.stripe.com/3cI00i1Qi4Swa3jcgc3Je07"},
+        {"label": "白文字両面＋裏面加工（¥24,000）", "url": "https://buy.stripe.com/00wbJ01Qi5WA6R7fso3Je06"}
+      ],
+      "text": "▼ {option_label}\n{option_url}"
     },
     {
       "id": "production_done",
