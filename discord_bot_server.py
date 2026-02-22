@@ -80,7 +80,8 @@ def get_forum_completed():
     return os.environ.get("DISCORD_FORUM_COMPLETED")
 
 def get_forum_line():
-    return os.environ.get("DISCORD_FORUM_LINE", "1463460598493745225")
+    """※LINE対応フォーラムは廃止。互換性のため残置"""
+    return os.environ.get("DISCORD_FORUM_LINE", "")
 
 def get_forum_atelier():
     return os.environ.get("DISCORD_FORUM_ATELIER", "1472857095031488524")
@@ -973,9 +974,12 @@ async def on_message(message):
             await handle_atelier_message(message)
             return  # LINE転送は不要
 
-    # ── #LINE対応 フォーラムスレッド → LINE / Instagram 転送 ──
+    # ── #LINE対応 フォーラムスレッド → LINE / Instagram 転送（※廃止）──
+    forum_line_id = get_forum_line()
+    if not forum_line_id:
+        return
     if not (isinstance(message.channel, discord.Thread) and
-            message.channel.parent_id == int(get_forum_line())):
+            message.channel.parent_id == int(forum_line_id)):
         # フォーラムスレッド外 → 通常チャンネルからの転送（トピックにLINE User IDがあれば転送）
         line_user_id = None
         if hasattr(message.channel, 'topic'):
