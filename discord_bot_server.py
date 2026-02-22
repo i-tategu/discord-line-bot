@@ -1960,13 +1960,45 @@ class TemplateManageSelect(discord.ui.Select):
             if not template:
                 await interaction.response.send_message("テンプレートが見つかりません", ephemeral=True)
                 return
-            modal = TemplateManageModal(
-                template_id=template["id"],
-                label=template["label"],
-                text=template["text"],
-                is_new=False
-            )
-            await interaction.response.send_modal(modal)
+            # 編集 or 削除の選択肢を表示
+            view = discord.ui.View(timeout=60)
+            edit_btn = discord.ui.Button(label="編集", style=discord.ButtonStyle.primary, emoji="✏️")
+            delete_btn = discord.ui.Button(label="削除", style=discord.ButtonStyle.danger, emoji="🗑️")
+
+            async def _edit(i):
+                modal = TemplateManageModal(
+                    template_id=template["id"],
+                    label=template["label"],
+                    text=template["text"],
+                    is_new=False
+                )
+                await i.response.send_modal(modal)
+
+            async def _delete(i):
+                confirm_view = discord.ui.View(timeout=30)
+                yes_btn = discord.ui.Button(label="削除する", style=discord.ButtonStyle.danger)
+                no_btn = discord.ui.Button(label="キャンセル", style=discord.ButtonStyle.secondary)
+
+                async def _yes(i2):
+                    tpls = load_templates()
+                    tpls = [t for t in tpls if t["id"] != template["id"]]
+                    save_templates(tpls)
+                    await i2.response.edit_message(content=f"✅ 「{template['label']}」を削除しました", view=None)
+
+                async def _no(i2):
+                    await i2.response.edit_message(content="キャンセルしました", view=None)
+
+                yes_btn.callback = _yes
+                no_btn.callback = _no
+                confirm_view.add_item(yes_btn)
+                confirm_view.add_item(no_btn)
+                await i.response.edit_message(content=f"⚠️ 「{template['label']}」を削除しますか？", view=confirm_view)
+
+            edit_btn.callback = _edit
+            delete_btn.callback = _delete
+            view.add_item(edit_btn)
+            view.add_item(delete_btn)
+            await interaction.response.edit_message(content=f"📝 {template['emoji']} {template['label']}", view=view)
 
 
 class TemplateManageModal(discord.ui.Modal):
