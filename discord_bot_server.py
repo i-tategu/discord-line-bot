@@ -415,9 +415,9 @@ async def create_status_embed():
                     latest_order = c['orders'][-1]
                     order_num = f"#{latest_order.get('order_id', '')} "
                 if channel_id:
-                    customer_links.append(f"• {config['emoji']} {order_num}<#{channel_id}> {name}様")
+                    customer_links.append(f"• {order_num}<#{channel_id}> {name}様")
                 else:
-                    customer_links.append(f"• {config['emoji']} {order_num}{name}様")
+                    customer_links.append(f"• {order_num}{name}様")
 
             # Embed文字数制限(4096)対策: 超える場合は複数Embedに分割
             chunk = []
