@@ -358,6 +358,9 @@ def get_thread_customer_info(thread):
 
     order_match = re.search(r'#(\d+)', thread.name)
     order_id = order_match.group(1) if order_match else None
+    # フォーラム連番（小さい数値）はWooCommerce注文IDではないのでスキップ
+    if order_id and int(order_id) < 100:
+        order_id = None
 
     return customer_name, order_id
 
