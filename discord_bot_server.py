@@ -447,6 +447,170 @@ async def create_status_embed():
     return embeds
 
 
+# ================== Status Change UI ==================
+
+class StatusChangeView(discord.ui.View):
+    """顧客一覧に表示するステータス変更ボタン（Persistent View）"""
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="ステータス変更", style=discord.ButtonStyle.primary, custom_id="status_change_btn", emoji="🔄")
+    async def status_change_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        customers = load_customers()
+        if not customers:
+            await interaction.response.send_message("顧客データがありません", ephemeral=True)
+            return
+
+        view = CustomerSelectView(customers)
+        await interaction.response.send_message("ステータスを変更する顧客を選択してください:", view=view, ephemeral=True)
+
+
+class CustomerSelectView(discord.ui.View):
+    """顧客選択ドロップダウン"""
+    def __init__(self, customers):
+        super().__init__(timeout=120)
+
+        options = []
+        for key, data in customers.items():
+            name = data.get("display_name", "不明")
+            status_str = data.get("status", CustomerStatus.PURCHASED.value)
+            try:
+                status = CustomerStatus(status_str)
+            except ValueError:
+                status = CustomerStatus.PURCHASED
+            config = STATUS_CONFIG[status]
+
+            order_label = ""
+            if data.get("orders"):
+                latest = data["orders"][-1]
+                order_label = f" #{latest.get('order_id', '')}"
+
+            options.append(discord.SelectOption(
+                label=f"{name}{order_label}",
+                value=key,
+                description=f"{config['emoji']} {config['label']}",
+                emoji=config['emoji']
+            ))
+            if len(options) >= 25:
+                break
+
+        self.add_item(CustomerSelectMenu(options, customers))
+
+
+class CustomerSelectMenu(discord.ui.Select):
+    """顧客選択セレクトメニュー"""
+    def __init__(self, options, customers):
+        super().__init__(placeholder="顧客を選択...", options=options)
+        self.customers = customers
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_key = self.values[0]
+        customer = self.customers.get(selected_key)
+        if not customer:
+            await interaction.response.edit_message(content="顧客が見つかりません", view=None)
+            return
+
+        name = customer.get("display_name", "不明")
+        view = StatusSelectView(selected_key, customer)
+        await interaction.response.edit_message(
+            content=f"**{name}** の新しいステータスを選択してください:",
+            view=view
+        )
+
+
+class StatusSelectView(discord.ui.View):
+    """ステータス選択ドロップダウン"""
+    def __init__(self, customer_key, customer_data):
+        super().__init__(timeout=120)
+
+        options = []
+        for status in CustomerStatus:
+            config = STATUS_CONFIG[status]
+            options.append(discord.SelectOption(
+                label=config["label"],
+                value=status.value,
+                emoji=config["emoji"]
+            ))
+
+        self.add_item(StatusSelectMenu(options, customer_key, customer_data))
+
+
+class StatusSelectMenu(discord.ui.Select):
+    """ステータス選択セレクトメニュー"""
+    def __init__(self, options, customer_key, customer_data):
+        super().__init__(placeholder="新しいステータスを選択...", options=options)
+        self.customer_key = customer_key
+        self.customer_data = customer_data
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_status_value = self.values[0]
+        try:
+            new_status = CustomerStatus(selected_status_value)
+        except ValueError:
+            await interaction.response.edit_message(content="無効なステータスです", view=None)
+            return
+
+        config = STATUS_CONFIG[new_status]
+        name = self.customer_data.get("display_name", "不明")
+
+        await interaction.response.edit_message(
+            content=f"⏳ **{name}** → {config['emoji']} {config['label']} に更新中...",
+            view=None
+        )
+
+        results = []
+
+        # 1. customer_manager のステータス更新
+        update_customer_status(self.customer_key, new_status)
+        results.append("✅ 顧客ステータス更新")
+
+        # 2. アトリエフォーラムスレッド更新 & WooCommerce更新（order_idがある場合）
+        orders = self.customer_data.get("orders", [])
+        for order in orders:
+            order_id = order.get("order_id")
+            if not order_id:
+                continue
+
+            # アトリエスレッド更新
+            try:
+                await update_atelier_thread_status(order_id, new_status)
+                results.append(f"✅ スレッド更新 (#{order_id})")
+            except Exception as e:
+                results.append(f"⚠️ スレッド更新失敗 (#{order_id}): {e}")
+
+            # WooCommerce ステータス更新
+            wc_status_map = {
+                "purchased": "designing",
+                "design-confirmed": "design-confirmed",
+                "produced": "produced",
+                "shipped": "shipped",
+            }
+            wc_status = wc_status_map.get(new_status.value, new_status.value)
+            wc_url = get_wc_url()
+            wc_key = get_wc_consumer_key()
+            wc_secret = get_wc_consumer_secret()
+
+            if all([wc_url, wc_key, wc_secret]):
+                try:
+                    url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}"
+                    resp = requests.put(url, auth=(wc_key, wc_secret), json={"status": wc_status}, timeout=10)
+                    if resp.status_code == 200:
+                        results.append(f"✅ WooCommerce → {wc_status} (#{order_id})")
+                    else:
+                        results.append(f"⚠️ WooCommerce更新失敗 (#{order_id}: {resp.status_code})")
+                except Exception as e:
+                    results.append(f"⚠️ WooCommerceエラー: {e}")
+
+        # 3. 顧客一覧Embed再更新
+        await update_overview_channel()
+        results.append("✅ 顧客一覧更新")
+
+        result_text = "\n".join(results)
+        await interaction.edit_original_response(
+            content=f"**{name}** → {config['emoji']} {config['label']}\n\n{result_text}"
+        )
+
+
 async def update_overview_channel():
     """一覧チャンネルを更新"""
     global overview_message_id
@@ -463,12 +627,13 @@ async def update_overview_channel():
         return
 
     embeds = await create_status_embed()
+    view = StatusChangeView()
 
     try:
         if overview_message_id:
             try:
                 message = await channel.fetch_message(overview_message_id)
-                await message.edit(embeds=embeds)
+                await message.edit(embeds=embeds, view=view)
                 return
             except discord.NotFound:
                 pass
@@ -477,7 +642,7 @@ async def update_overview_channel():
             if msg.author == bot.user:
                 await msg.delete()
 
-        message = await channel.send(embeds=embeds)
+        message = await channel.send(embeds=embeds, view=view)
         overview_message_id = message.id
 
     except Exception as e:
@@ -660,6 +825,7 @@ async def on_ready():
 
     # Persistent Viewを登録（Bot再起動後もボタンが動作・テンプレート動的生成）
     bot.add_view(create_template_view())
+    bot.add_view(StatusChangeView())
 
     # API一覧・コスト取得の Persistent View とコマンド登録
     if API_MANAGER_ENABLED:
