@@ -2512,6 +2512,21 @@ def serve_proxy_image(filename):
     return send_from_directory(IMAGE_PROXY_DIR, filename)
 
 
+@api.route("/debug/proxy", methods=["GET"])
+def debug_proxy():
+    """画像プロキシのデバッグ情報"""
+    import glob as g
+    files = g.glob(os.path.join(IMAGE_PROXY_DIR, "*"))
+    return jsonify({
+        "public_url": get_public_url(),
+        "image_proxy_dir": IMAGE_PROXY_DIR,
+        "dir_exists": os.path.exists(IMAGE_PROXY_DIR),
+        "files": [os.path.basename(f) for f in files],
+        "data_dir": os.environ.get("DATA_DIR", "NOT SET"),
+        "railway_public_domain": os.environ.get("RAILWAY_PUBLIC_DOMAIN", "NOT SET"),
+    })
+
+
 def verify_woo_webhook_signature(payload, signature, secret):
     """WooCommerce Webhook署名をHMAC-SHA256で検証"""
     if not secret or not signature:
