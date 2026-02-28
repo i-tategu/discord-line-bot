@@ -135,7 +135,10 @@ IMAGE_PROXY_MAX_AGE = 3600  # 1時間後に古いファイルを削除
 
 def get_public_url():
     """Botの公開URL（Railway）"""
-    return os.environ.get("RAILWAY_PUBLIC_DOMAIN", os.environ.get("PUBLIC_URL", "worker-production-eb8a.up.railway.app"))
+    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", os.environ.get("PUBLIC_URL", "worker-production-eb8a.up.railway.app"))
+    # https:// が含まれていたら除去してドメインだけにする
+    domain = domain.replace("https://", "").replace("http://", "").rstrip("/")
+    return domain
 
 def proxy_image_for_line(image_url):
     """画像をダウンロードしてLINEがアクセスできる公開URLを返す"""
@@ -211,6 +214,8 @@ def send_line_message(user_id, messages):
     }
     data = {"to": user_id, "messages": messages}
     response = requests.post(url, headers=headers, json=data)
+    if response.status_code != 200:
+        print(f"[LINE] Send failed: {response.status_code} {response.text[:200]}")
     return response.status_code == 200
 
 
@@ -944,11 +949,13 @@ async def handle_atelier_message(message):
     # テキストメッセージ
     text = message.content if message.content and not message.content.startswith("!") else ""
 
-    # 画像URL（最初の画像添付のみ）
+    # 画像URL（最初の画像添付のみ）→ プロキシ経由で公開URLに変換
     image_url = ""
     for attachment in message.attachments:
         if attachment.content_type and attachment.content_type.startswith("image/"):
-            image_url = attachment.url
+            proxied = proxy_image_for_line(attachment.url)
+            if proxied:
+                image_url = proxied
             break
 
     if not text and not image_url:
