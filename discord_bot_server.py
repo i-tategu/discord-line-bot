@@ -924,6 +924,24 @@ async def on_ready():
     print("=" * 50)
 
 
+def is_inquiry_thread(thread):
+    """問い合わせスレッドかどうか判定（絵文字変更後も正しく判定）"""
+    name = thread.name if hasattr(thread, 'name') else str(thread)
+    # 1. 💬 プレフィックス（初期状態）
+    if '💬' in name:
+        return True
+    # 2. フォーラムタグに「問い合わせ」が含まれる
+    if hasattr(thread, 'applied_tags'):
+        for tag in thread.applied_tags:
+            if '問い合わせ' in tag.name or 'inquiry' in tag.name.lower():
+                return True
+    # 3. #番号 が小さい（WooCommerce注文は通常1000以上）
+    id_match = re.search(r'#(\d+)', name)
+    if id_match and int(id_match.group(1)) < 100:
+        return True
+    return False
+
+
 async def handle_atelier_message(message):
     """#atelier フォーラムのメッセージをWordPress webhook に転送"""
     # スレッド名からIDを取得（例: "🟡 #1865 はるか 様" or "💬 #1 石橋伯昂 様"）
@@ -934,7 +952,7 @@ async def handle_atelier_message(message):
         return
 
     target_id = id_match.group(1)
-    is_inquiry = thread_name.startswith('💬')
+    is_inquiry = is_inquiry_thread(message.channel)
     webhook_url = get_atelier_webhook_url()
     secret = get_atelier_webhook_secret()
 
@@ -1026,7 +1044,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         return
 
     target_id = id_match.group(1)
-    is_inquiry = channel.name.startswith('💬')
+    is_inquiry = is_inquiry_thread(channel)
     webhook_url = get_atelier_webhook_url()
     secret = get_atelier_webhook_secret()
     if not webhook_url or not secret:
@@ -1108,7 +1126,7 @@ async def on_thread_update(before: discord.Thread, after: discord.Thread):
     if not id_match:
         return
     target_id = int(id_match.group(1))
-    is_inquiry = after.name.startswith('💬')
+    is_inquiry = is_inquiry_thread(after)
 
     # スレッド名の絵文字も更新
     try:
