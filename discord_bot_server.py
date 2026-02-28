@@ -14,7 +14,10 @@ import threading
 import hmac
 import hashlib
 import base64
-from flask import Flask, request, jsonify
+import uuid
+import glob
+import time
+from flask import Flask, request, jsonify, send_from_directory
 from dotenv import load_dotenv
 import discord
 from discord.ext import commands
@@ -124,6 +127,61 @@ def get_instagram_app_secret():
 # スレッドマップファイル
 THREAD_MAP_FILE = os.path.join(os.path.dirname(__file__), "thread_map.json")
 INSTAGRAM_THREAD_MAP_FILE = os.path.join(os.path.dirname(__file__), "instagram_thread_map.json")
+
+# 画像プロキシ用ディレクトリ
+IMAGE_PROXY_DIR = os.path.join(os.environ.get("DATA_DIR", "/tmp"), "proxy_images")
+os.makedirs(IMAGE_PROXY_DIR, exist_ok=True)
+IMAGE_PROXY_MAX_AGE = 3600  # 1時間後に古いファイルを削除
+
+def get_public_url():
+    """Botの公開URL（Railway）"""
+    return os.environ.get("RAILWAY_PUBLIC_DOMAIN", os.environ.get("PUBLIC_URL", "worker-production-eb8a.up.railway.app"))
+
+def proxy_image_for_line(image_url):
+    """画像をダウンロードしてLINEがアクセスできる公開URLを返す"""
+    try:
+        # 古い画像を掃除
+        cleanup_proxy_images()
+
+        # 画像をダウンロード
+        resp = requests.get(image_url, timeout=15)
+        if resp.status_code != 200:
+            print(f"[ImageProxy] Download failed: {resp.status_code} from {image_url[:80]}")
+            return None
+
+        # Content-Typeから拡張子を決定
+        content_type = resp.headers.get("Content-Type", "image/jpeg")
+        ext = ".jpg"
+        if "png" in content_type:
+            ext = ".png"
+        elif "gif" in content_type:
+            ext = ".gif"
+        elif "webp" in content_type:
+            ext = ".webp"
+
+        filename = f"{uuid.uuid4().hex}{ext}"
+        filepath = os.path.join(IMAGE_PROXY_DIR, filename)
+
+        with open(filepath, "wb") as f:
+            f.write(resp.content)
+
+        public_url = f"https://{get_public_url()}/images/{filename}"
+        print(f"[ImageProxy] Saved: {filename} ({len(resp.content)} bytes) → {public_url}")
+        return public_url
+
+    except Exception as e:
+        print(f"[ImageProxy] Error: {e}")
+        return None
+
+def cleanup_proxy_images():
+    """古いプロキシ画像を削除"""
+    try:
+        now = time.time()
+        for filepath in glob.glob(os.path.join(IMAGE_PROXY_DIR, "*")):
+            if now - os.path.getmtime(filepath) > IMAGE_PROXY_MAX_AGE:
+                os.remove(filepath)
+    except Exception:
+        pass
 
 # Flask API
 api = Flask(__name__)
@@ -1164,11 +1222,13 @@ async def on_message(message):
                 await message.add_reaction("❌")
         for attachment in message.attachments:
             if attachment.content_type and attachment.content_type.startswith("image/"):
-                send_line_message(line_user_id, [{
-                    "type": "image",
-                    "originalContentUrl": attachment.url,
-                    "previewImageUrl": attachment.url
-                }])
+                public_url = proxy_image_for_line(attachment.url)
+                if public_url:
+                    send_line_message(line_user_id, [{
+                        "type": "image",
+                        "originalContentUrl": public_url,
+                        "previewImageUrl": public_url
+                    }])
         return
 
     # ── フォーラムスレッド内: プラットフォーム判定 ──
@@ -1243,11 +1303,12 @@ async def on_message(message):
     all_line_users = get_all_line_users_from_thread(thread_id)
     if len(all_line_users) > 1:
         has_content = message.content and not message.content.startswith("!")
-        attachment_data = [
-            {'url': att.url, 'content_type': att.content_type}
-            for att in message.attachments
-            if att.content_type and att.content_type.startswith("image/")
-        ]
+        attachment_data = []
+        for att in message.attachments:
+            if att.content_type and att.content_type.startswith("image/"):
+                public_url = proxy_image_for_line(att.url)
+                if public_url:
+                    attachment_data.append({'url': public_url, 'content_type': att.content_type})
         if has_content or attachment_data:
             view = ReplyTargetView(all_line_users, message.content if has_content else "", attachment_data)
             names = " / ".join(u['display_name'] for u in all_line_users)
@@ -1267,15 +1328,17 @@ async def on_message(message):
     # 画像送信
     for attachment in message.attachments:
         if attachment.content_type and attachment.content_type.startswith("image/"):
-            success = send_line_message(line_user_id, [
-                {
-                    "type": "image",
-                    "originalContentUrl": attachment.url,
-                    "previewImageUrl": attachment.url
-                }
-            ])
-            if success:
-                await message.add_reaction("🖼️")
+            public_url = proxy_image_for_line(attachment.url)
+            if public_url:
+                success = send_line_message(line_user_id, [
+                    {
+                        "type": "image",
+                        "originalContentUrl": public_url,
+                        "previewImageUrl": public_url
+                    }
+                ])
+                if success:
+                    await message.add_reaction("🖼️")
 
 
 # ================== Button Interactions ==================
@@ -2434,6 +2497,12 @@ def api_notify_changed():
 def health_check():
     """ヘルスチェック（Railway用）"""
     return jsonify({"status": "ok", "canva_enabled": CANVA_ENABLED})
+
+
+@api.route("/images/<filename>", methods=["GET"])
+def serve_proxy_image(filename):
+    """プロキシ画像を配信（LINE APIからのアクセス用）"""
+    return send_from_directory(IMAGE_PROXY_DIR, filename)
 
 
 def verify_woo_webhook_signature(payload, signature, secret):
