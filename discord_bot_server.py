@@ -131,7 +131,7 @@ INSTAGRAM_THREAD_MAP_FILE = os.path.join(os.path.dirname(__file__), "instagram_t
 # 画像プロキシ用ディレクトリ
 IMAGE_PROXY_DIR = os.path.join(os.environ.get("DATA_DIR", "/tmp"), "proxy_images")
 os.makedirs(IMAGE_PROXY_DIR, exist_ok=True)
-IMAGE_PROXY_MAX_AGE = 3600  # 1時間後に古いファイルを削除
+IMAGE_PROXY_MAX_AGE = 90 * 24 * 3600  # 90日後に古いファイルを削除（アトリエページで閲覧するため長期保持）
 
 def get_public_url():
     """Botの公開URL（Railway）"""
@@ -2529,20 +2529,6 @@ def serve_proxy_image(filename):
     """プロキシ画像を配信（LINE APIからのアクセス用）"""
     return send_from_directory(IMAGE_PROXY_DIR, filename)
 
-
-@api.route("/debug/proxy", methods=["GET"])
-def debug_proxy():
-    """画像プロキシのデバッグ情報"""
-    import glob as g
-    files = g.glob(os.path.join(IMAGE_PROXY_DIR, "*"))
-    return jsonify({
-        "public_url": get_public_url(),
-        "image_proxy_dir": IMAGE_PROXY_DIR,
-        "dir_exists": os.path.exists(IMAGE_PROXY_DIR),
-        "files": [os.path.basename(f) for f in files],
-        "data_dir": os.environ.get("DATA_DIR", "NOT SET"),
-        "railway_public_domain": os.environ.get("RAILWAY_PUBLIC_DOMAIN", "NOT SET"),
-    })
 
 
 def verify_woo_webhook_signature(payload, signature, secret):
