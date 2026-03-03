@@ -415,17 +415,20 @@ def save_templates(templates, version=None):
 
 
 def get_thread_customer_info(thread):
-    """フォーラムスレッドから顧客情報を取得"""
-    name_match = re.search(r'[\U0001F7E0\U0001F7E1\U0001F535\U0001F7E2\u2705\U0001F4E6\U0001F389\U0001F490\U0001F64F\U0001F4AC]\s*(?:#\d+\s+)?(.+?)\s*様', thread.name)
-    customer_name = name_match.group(1) if name_match else "お客様"
+    """フォーラムスレッドから顧客情報を取得
+    Returns: (customer_name, order_or_inquiry_id, is_inquiry)
+    """
+    # 顧客名抽出: 絵文字 #ID 名前 様 (IG名) のパターンに対応
+    name_match = re.search(r'#\d+\s+(.+?)(?:\s*様|\s*\()', thread.name)
+    if not name_match:
+        name_match = re.search(r'#\d+\s+(.+)', thread.name)
+    customer_name = name_match.group(1).strip().rstrip('様').strip() if name_match else "お客様"
 
     order_match = re.search(r'#(\d+)', thread.name)
-    order_id = order_match.group(1) if order_match else None
-    # フォーラム連番（小さい数値）はWooCommerce注文IDではないのでスキップ
-    if order_id and int(order_id) < 100:
-        order_id = None
+    target_id = order_match.group(1) if order_match else None
+    inquiry = is_inquiry_thread(thread)
 
-    return customer_name, order_id
+    return customer_name, target_id, inquiry
 
 
 async def find_line_user_id_in_thread(thread):
@@ -1968,9 +1971,9 @@ class TemplateEditModal(discord.ui.Modal):
 
         results.append("✅ アトリエ送信完了")
 
-        # 2. WooCommerceステータス更新（一度だけ）
+        # 2. WooCommerceステータス更新（注文のみ、問い合わせはスキップ）
         status_action = self.template.get("status_action")
-        if status_action and self.order_id:
+        if status_action and self.order_id and not self.is_inquiry:
             wc_url = get_wc_url()
             wc_key = get_wc_consumer_key()
             wc_secret = get_wc_consumer_secret()
@@ -1986,8 +1989,8 @@ class TemplateEditModal(discord.ui.Modal):
                 except Exception as e:
                     results.append(f"⚠️ WooCommerceエラー: {e}")
 
-        # 3. customer_managerステータス更新（注文IDで全連動顧客を更新）
-        if status_action and self.order_id:
+        # 3. customer_managerステータス更新（注文のみ）
+        if status_action and self.order_id and not self.is_inquiry:
             try:
                 new_status = CustomerStatus(status_action)
                 update_linked_customer_statuses(self.order_id, new_status)
@@ -2143,11 +2146,10 @@ async def _handle_template_button(interaction: discord.Interaction, template_id:
         await interaction.response.send_message("オプションを選択してください:", view=view, ephemeral=True)
         return
 
-    customer_name, order_id = get_thread_customer_info(thread)
-    is_inquiry = thread.name.startswith('💬')
+    customer_name, target_id, is_inquiry = get_thread_customer_info(thread)
     all_users = [{'line_user_id': '', 'display_name': customer_name}]
 
-    modal = TemplateEditModal(template, customer_name, order_id, all_users, is_inquiry=is_inquiry)
+    modal = TemplateEditModal(template, customer_name, target_id, all_users, is_inquiry=is_inquiry)
     await interaction.response.send_modal(modal)
 
 
@@ -2168,15 +2170,14 @@ class OptionPaymentSelect(discord.ui.Select):
 
         # 編集用モーダルで表示（送信前に確認・編集可能）
         thread = interaction.channel
-        customer_name, order_id = get_thread_customer_info(thread)
-        is_inquiry = thread.name.startswith('💬')
+        customer_name, target_id, is_inquiry = get_thread_customer_info(thread)
         all_users = [{'line_user_id': '', 'display_name': customer_name}]
 
         # テンプレートのコピーを作成してテキストを置換済みのものに差し替え
         template_copy = dict(self.template_data)
         template_copy["text"] = text
 
-        modal = TemplateEditModal(template_copy, customer_name, order_id, all_users, is_inquiry=is_inquiry)
+        modal = TemplateEditModal(template_copy, customer_name, target_id, all_users, is_inquiry=is_inquiry)
         await interaction.response.send_modal(modal)
 
 
