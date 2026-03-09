@@ -124,6 +124,22 @@ def get_instagram_page_token():
 def get_instagram_app_secret():
     return os.environ.get("INSTAGRAM_APP_SECRET", "")
 
+# 都道府県コード変換
+JP_STATES = {
+    'JP01': '北海道', 'JP02': '青森県', 'JP03': '岩手県', 'JP04': '宮城県',
+    'JP05': '秋田県', 'JP06': '山形県', 'JP07': '福島県', 'JP08': '茨城県',
+    'JP09': '栃木県', 'JP10': '群馬県', 'JP11': '埼玉県', 'JP12': '千葉県',
+    'JP13': '東京都', 'JP14': '神奈川県', 'JP15': '新潟県', 'JP16': '富山県',
+    'JP17': '石川県', 'JP18': '福井県', 'JP19': '山梨県', 'JP20': '長野県',
+    'JP21': '岐阜県', 'JP22': '静岡県', 'JP23': '愛知県', 'JP24': '三重県',
+    'JP25': '滋賀県', 'JP26': '京都府', 'JP27': '大阪府', 'JP28': '兵庫県',
+    'JP29': '奈良県', 'JP30': '和歌山県', 'JP31': '鳥取県', 'JP32': '島根県',
+    'JP33': '岡山県', 'JP34': '広島県', 'JP35': '山口県', 'JP36': '徳島県',
+    'JP37': '香川県', 'JP38': '愛媛県', 'JP39': '高知県', 'JP40': '福岡県',
+    'JP41': '佐賀県', 'JP42': '長崎県', 'JP43': '熊本県', 'JP44': '大分県',
+    'JP45': '宮崎県', 'JP46': '鹿児島県', 'JP47': '沖縄県'
+}
+
 # スレッドマップファイル
 THREAD_MAP_FILE = os.path.join(os.path.dirname(__file__), "thread_map.json")
 INSTAGRAM_THREAD_MAP_FILE = os.path.join(os.path.dirname(__file__), "instagram_thread_map.json")
@@ -1389,6 +1405,10 @@ async def on_interaction(interaction: discord.Interaction):
         order_id = custom_id.replace("b2_autofill_", "")
         await handle_b2_autofill(interaction, order_id)
 
+    # /s コマンドのコピーボタン
+    elif custom_id.startswith("s_copy_"):
+        await handle_s_copy(interaction, custom_id)
+
     # 発送完了ボタン
     elif custom_id.startswith("shipped_"):
         order_id = custom_id.replace("shipped_", "")
@@ -1546,21 +1566,6 @@ async def handle_b2_copy(interaction: discord.Interaction, order_id: str):
         address1 = shipping.get('address_1') or billing.get('address_1', '')
         address2 = shipping.get('address_2') or billing.get('address_2', '')
 
-        # 都道府県コード変換
-        JP_STATES = {
-            'JP01': '北海道', 'JP02': '青森県', 'JP03': '岩手県', 'JP04': '宮城県',
-            'JP05': '秋田県', 'JP06': '山形県', 'JP07': '福島県', 'JP08': '茨城県',
-            'JP09': '栃木県', 'JP10': '群馬県', 'JP11': '埼玉県', 'JP12': '千葉県',
-            'JP13': '東京都', 'JP14': '神奈川県', 'JP15': '新潟県', 'JP16': '富山県',
-            'JP17': '石川県', 'JP18': '福井県', 'JP19': '山梨県', 'JP20': '長野県',
-            'JP21': '岐阜県', 'JP22': '静岡県', 'JP23': '愛知県', 'JP24': '三重県',
-            'JP25': '滋賀県', 'JP26': '京都府', 'JP27': '大阪府', 'JP28': '兵庫県',
-            'JP29': '奈良県', 'JP30': '和歌山県', 'JP31': '鳥取県', 'JP32': '島根県',
-            'JP33': '岡山県', 'JP34': '広島県', 'JP35': '山口県', 'JP36': '徳島県',
-            'JP37': '香川県', 'JP38': '愛媛県', 'JP39': '高知県', 'JP40': '福岡県',
-            'JP41': '佐賀県', 'JP42': '長崎県', 'JP43': '熊本県', 'JP44': '大分県',
-            'JP45': '宮崎県', 'JP46': '鹿児島県', 'JP47': '沖縄県'
-        }
         state_name = JP_STATES.get(state, state)
 
         full_address = f"{city}{address1}"
@@ -1642,7 +1647,167 @@ async def handle_shipped(interaction: discord.Interaction, order_id: str):
         await interaction.followup.send(f"エラー: {e}")
 
 
+async def handle_s_copy(interaction: discord.Interaction, custom_id: str):
+    """出荷情報コピーボタンのハンドラ"""
+    await interaction.response.defer(ephemeral=True)
+
+    # custom_id: s_copy_name_{order_id}, s_copy_phone_{order_id}, etc.
+    parts = custom_id.split("_", 3)  # ['s', 'copy', 'field', 'order_id']
+    if len(parts) < 4:
+        await interaction.followup.send("不正なボタンIDです", ephemeral=True)
+        return
+
+    field = parts[2]
+    order_id = parts[3]
+
+    wc_url = get_wc_url()
+    wc_key = get_wc_consumer_key()
+    wc_secret = get_wc_consumer_secret()
+
+    if not all([wc_url, wc_key, wc_secret]):
+        await interaction.followup.send("WooCommerce設定がありません", ephemeral=True)
+        return
+
+    try:
+        url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}"
+        response = requests.get(url, auth=(wc_key, wc_secret))
+        if response.status_code != 200:
+            await interaction.followup.send(f"注文取得失敗: {response.status_code}", ephemeral=True)
+            return
+
+        order = response.json()
+        billing = order.get('billing', {})
+        shipping = order.get('shipping', {})
+
+        if field == "name":
+            value = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
+            label = "名前"
+        elif field == "phone":
+            value = billing.get('phone', '')
+            label = "電話番号"
+        elif field == "postal":
+            value = shipping.get('postcode') or billing.get('postcode', '')
+            label = "郵便番号"
+        elif field == "addr":
+            state = shipping.get('state') or billing.get('state', '')
+            state_name = JP_STATES.get(state, state)
+            city = shipping.get('city') or billing.get('city', '')
+            address1 = shipping.get('address_1') or billing.get('address_1', '')
+            address2 = shipping.get('address_2') or billing.get('address_2', '')
+            value = f"{state_name}{city}{address1}"
+            if address2:
+                value += f" {address2}"
+            label = "住所"
+        else:
+            await interaction.followup.send("不明なフィールドです", ephemeral=True)
+            return
+
+        await interaction.followup.send(f"**{label}:**\n```\n{value}\n```", ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(f"エラー: {e}", ephemeral=True)
+
+
 # ================== Slash Commands ==================
+
+@bot.tree.command(name="s", description="出荷先情報を表示")
+async def shipping_info(interaction: discord.Interaction):
+    """スレッドから注文IDを取得し、出荷先情報をEmbed+コピーボタンで表示"""
+    await interaction.response.defer(ephemeral=True)
+
+    channel = interaction.channel
+
+    # アトリエフォーラムスレッドかチェック
+    forum_atelier = get_forum_atelier()
+    if not forum_atelier or not isinstance(channel, discord.Thread) or str(channel.parent_id) != str(forum_atelier):
+        await interaction.followup.send("このコマンドはアトリエフォーラムのスレッドでのみ使用できます", ephemeral=True)
+        return
+
+    # スレッド名から注文ID抽出
+    match = re.search(r'#(\d+)', channel.name)
+    if not match:
+        await interaction.followup.send("スレッド名から注文番号を取得できません（#数字 が必要）", ephemeral=True)
+        return
+
+    order_id = match.group(1)
+
+    wc_url = get_wc_url()
+    wc_key = get_wc_consumer_key()
+    wc_secret = get_wc_consumer_secret()
+
+    if not all([wc_url, wc_key, wc_secret]):
+        await interaction.followup.send("WooCommerce設定がありません", ephemeral=True)
+        return
+
+    try:
+        url = f"{wc_url}/wp-json/wc/v3/orders/{order_id}"
+        response = requests.get(url, auth=(wc_key, wc_secret))
+        if response.status_code != 200:
+            await interaction.followup.send(f"注文 #{order_id} の取得に失敗しました (HTTP {response.status_code})", ephemeral=True)
+            return
+
+        order = response.json()
+        billing = order.get('billing', {})
+        shipping = order.get('shipping', {})
+
+        customer_name = f"{billing.get('last_name', '')} {billing.get('first_name', '')}"
+        phone = billing.get('phone', '')
+        postcode = shipping.get('postcode') or billing.get('postcode', '')
+        state = shipping.get('state') or billing.get('state', '')
+        state_name = JP_STATES.get(state, state)
+        city = shipping.get('city') or billing.get('city', '')
+        address1 = shipping.get('address_1') or billing.get('address_1', '')
+        address2 = shipping.get('address_2') or billing.get('address_2', '')
+        full_address = f"{state_name}{city}{address1}"
+        if address2:
+            full_address += f" {address2}"
+
+        embed = discord.Embed(
+            title=f"📦 出荷情報 | 注文 #{order_id}",
+            color=0x3498DB
+        )
+        embed.add_field(name="📞 電話", value=phone, inline=False)
+        embed.add_field(name="〒 郵便番号", value=postcode, inline=False)
+        embed.add_field(name="🏠 住所", value=full_address, inline=False)
+        embed.add_field(name="👤 名前", value=customer_name, inline=False)
+
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.primary,
+            label="🚚 B2自動入力",
+            custom_id=f"b2_autofill_{order_id}",
+            row=0
+        ))
+        view.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="📞 電話",
+            custom_id=f"s_copy_phone_{order_id}",
+            row=1
+        ))
+        view.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="〒 郵便番号",
+            custom_id=f"s_copy_postal_{order_id}",
+            row=1
+        ))
+        view.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="🏠 住所",
+            custom_id=f"s_copy_addr_{order_id}",
+            row=2
+        ))
+        view.add_item(discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="👤 名前",
+            custom_id=f"s_copy_name_{order_id}",
+            row=2
+        ))
+
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(f"エラー: {e}", ephemeral=True)
+
 
 @bot.tree.command(name="status", description="顧客のステータスを変更")
 @app_commands.describe(new_status="新しいステータス")
