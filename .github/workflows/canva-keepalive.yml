@@ -1,0 +1,25 @@
+name: Canva OAuth Keepalive
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh Canva OAuth token
+        run: |
+          set -e
+          response=$(curl -sS -w "\n%{http_code}" https://worker-production-eb8a.up.railway.app/api/canva/debug-token)
+          body=$(echo "$response" | head -n -1)
+          code=$(echo "$response" | tail -n 1)
+          echo "HTTP $code"
+          echo "$body" | python3 -m json.tool
+          success=$(echo "$body" | python3 -c "import sys, json; print(json.load(sys.stdin).get('refresh_success', False))")
+          if [ "$success" != "True" ]; then
+            echo "::error::Canva token refresh failed. Manual re-auth required."
+            exit 1
+          fi
+          echo "::notice::Canva token refresh successful"
