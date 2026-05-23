@@ -2989,6 +2989,20 @@ def api_canva_debug_token():
 
             if response.status_code == 200:
                 debug_info["refresh_success"] = True
+                # Canvaはrefresh_tokenローテーションのため、新トークンを必ず保存
+                # 保存しないと次回呼び出し時に「used twice」エラーでチェーンが壊れる
+                try:
+                    from canva_handler import save_tokens_to_file
+                    tokens = response.json()
+                    new_access = tokens.get('access_token')
+                    new_refresh = tokens.get('refresh_token', refresh_token)
+                    os.environ['CANVA_ACCESS_TOKEN'] = new_access
+                    os.environ['CANVA_REFRESH_TOKEN'] = new_refresh
+                    save_tokens_to_file(new_access, new_refresh)
+                    debug_info["tokens_saved"] = True
+                except Exception as save_err:
+                    debug_info["tokens_saved"] = False
+                    debug_info["save_error"] = str(save_err)
             else:
                 debug_info["refresh_success"] = False
         except Exception as e:
