@@ -57,6 +57,14 @@ except ImportError as e:
     API_MANAGER_ENABLED = False
     print(f"[WARN] API Manager not available: {e}")
 
+# Mac Studio ローカル LLM (Open WebUI 経由) 連携
+try:
+    from ollama_handler import register_ollama_commands
+    OLLAMA_HANDLER_ENABLED = True
+except ImportError as e:
+    OLLAMA_HANDLER_ENABLED = False
+    print(f"[WARN] Ollama handler not available: {e}")
+
 load_dotenv()
 
 # 環境変数（全て遅延読み込み - Railway Railpack対策）
@@ -914,6 +922,11 @@ async def on_ready():
         bot.add_view(APICostView())
         register_api_commands(bot)
         print("[OK] API Manager commands registered")
+
+    # Mac Studio ローカル LLM 連携コマンド登録
+    if OLLAMA_HANDLER_ENABLED:
+        register_ollama_commands(bot)
+        print("[OK] Ollama handler registered (slash /ai + mention)")
 
     try:
         guild = discord.Object(id=int(get_guild_id()))

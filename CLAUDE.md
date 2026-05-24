@@ -16,6 +16,7 @@ GitHub (i-tategu/discord-line-bot) → Railway自動デプロイ (main push)
 | canva_handler.py | Canva API自動処理 |
 | customer_manager.py | 顧客管理 |
 | product_register.py | 商品登録 |
+| ollama_handler.py | Mac Studio ローカル LLM 連携 (Open WebUI 経由 / `/ai` + mention) |
 
 ## API エンドポイント
 - /health — ヘルスチェック
