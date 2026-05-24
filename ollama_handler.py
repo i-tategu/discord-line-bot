@@ -7,11 +7,12 @@ Discord Bot ↔ Mac Studio ローカル LLM 連携
 - Allowlist で利用可能ユーザーを制限
 
 Required env vars:
-  OPENWEBUI_URL              例: https://macstudio.tail9b6868.ts.net
-  OPENWEBUI_API_KEY          Open WebUI で発行した sk-xxxx
-  OLLAMA_ALLOWED_USER_IDS    カンマ区切りの Discord ユーザー ID (空なら全員許可)
-  OLLAMA_DEFAULT_MODEL       既定モデル (デフォルト: qwen3.6:35b)
-  OLLAMA_VISION_MODEL        画像入力時のモデル (デフォルト: qwen3-vl:32b)
+  OPENWEBUI_URL                  例: https://macstudio.tail9b6868.ts.net
+  OPENWEBUI_API_KEY              Open WebUI で発行した sk-xxxx
+  OLLAMA_ALLOWED_USER_IDS        カンマ区切りの Discord ユーザー ID (空なら全員許可)
+  OLLAMA_DEFAULT_MODEL           既定モデル (デフォルト: qwen3.6:35b)
+  OLLAMA_VISION_MODEL            画像入力時のモデル (デフォルト: qwen3-vl:32b)
+  OLLAMA_AUTO_RESPOND_CHANNELS   カンマ区切りのチャンネル ID — メンション不要で自動応答
 """
 import os
 import base64
@@ -34,6 +35,13 @@ _VISION_MODEL = os.environ.get("OLLAMA_VISION_MODEL", "qwen3-vl:32b")
 _ALLOWED_USER_IDS: set[int] = {
     int(x.strip())
     for x in os.environ.get("OLLAMA_ALLOWED_USER_IDS", "").split(",")
+    if x.strip().isdigit()
+}
+
+# このチャンネル内では @メンション無しの全メッセージに自動応答する
+_AUTO_RESPOND_CHANNELS: set[int] = {
+    int(x.strip())
+    for x in os.environ.get("OLLAMA_AUTO_RESPOND_CHANNELS", "").split(",")
     if x.strip().isdigit()
 }
 
@@ -169,14 +177,18 @@ def register_ollama_commands(bot: commands.Bot) -> None:
     async def on_mention(message: discord.Message):
         if message.author.bot:
             return
-        if bot.user is None or bot.user not in message.mentions:
-            return
         if not _is_allowed(message.author.id):
             return
 
+        mentioned = bot.user is not None and bot.user in message.mentions
+        auto_channel = message.channel.id in _AUTO_RESPOND_CHANNELS
+        if not (mentioned or auto_channel):
+            return
+
         prompt = message.content
-        for token in (f"<@{bot.user.id}>", f"<@!{bot.user.id}>"):
-            prompt = prompt.replace(token, "")
+        if mentioned and bot.user is not None:
+            for token in (f"<@{bot.user.id}>", f"<@!{bot.user.id}>"):
+                prompt = prompt.replace(token, "")
         prompt = prompt.strip()
 
         if not prompt and not message.attachments:
@@ -191,8 +203,11 @@ def register_ollama_commands(bot: commands.Bot) -> None:
                     await message.channel.send(c, reference=first_ref if first_ref else None)
                     first_ref = None
             except Exception as e:
-                log.exception("[ollama] mention reply failed")
+                log.exception("[ollama] auto reply failed")
                 await message.channel.send(f"⚠️ エラー: {e}", reference=message)
 
     bot.add_listener(on_mention, "on_message")
-    log.info("[ollama] commands registered (slash /ai + mention)")
+    log.info(
+        f"[ollama] commands registered (slash /ai + mention; "
+        f"auto-respond channels: {len(_AUTO_RESPOND_CHANNELS)})"
+    )
