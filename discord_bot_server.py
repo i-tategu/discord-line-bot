@@ -2709,6 +2709,35 @@ def serve_proxy_image(filename):
     return send_from_directory(IMAGE_PROXY_DIR, filename)
 
 
+@api.route("/api/process-board", methods=["POST"])
+def api_process_board():
+    """来店アプリ用：板写真4枚を背景透過＋余白付与して返す（同期）。
+    Request JSON: {"base": "...", "images": {"1": b64, "2": b64, "3": b64, "4": b64}}
+    Header:  X-Board-Secret （= env BOARD_PROCESS_SECRET）
+    Response: {"ok": true, "images": {"1": b64png, ...}}
+    """
+    expected = os.environ.get("BOARD_PROCESS_SECRET", "")
+    secret = request.headers.get("X-Board-Secret", "")
+    if not expected or not hmac.compare_digest(secret, expected):
+        return jsonify({"error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    images = data.get("images") or {}
+    if not images:
+        return jsonify({"error": "images required"}), 400
+
+    try:
+        from board_processor import process_board_image
+        out = {}
+        for pos, b64 in images.items():
+            raw = base64.b64decode(b64)
+            png = process_board_image(raw)
+            out[str(pos)] = base64.b64encode(png).decode("ascii")
+        return jsonify({"ok": True, "images": out})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 
 def verify_woo_webhook_signature(payload, signature, secret):
     """WooCommerce Webhook署名をHMAC-SHA256で検証"""
